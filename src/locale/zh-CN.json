@@ -1,0 +1,17 @@
+{
+  "Logger Pro": "日志管理 Pro",
+  "Operation Overview": "运维概览",
+  "Log Console": "日志控制台",
+  "User Audit Log": "用户操作审计",
+  "Slow Query & Trace": "慢查询与链路追踪",
+  "Alarm Rules": "异常告警规则",
+  "Logging Configuration": "日志配置",
+  "AI Analysis": "AI 异常诊断",
+  "Total Logs": "日志总量",
+  "Error Count": "错误异常",
+  "Slow Queries": "慢查询数",
+  "Active Alerts": "活跃告警",
+  "Export Logs": "导出审计日志",
+  "Refresh": "刷新",
+  "Save": "保存"
+}

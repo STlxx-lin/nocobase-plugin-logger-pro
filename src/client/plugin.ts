@@ -13,7 +13,7 @@ export class PluginLoggerProClient extends Plugin {
     const manager = this.app?.pluginSettingsManager as any;
     if (!manager) return;
 
-    const title = '日志管理 Pro';
+    const title = this.app?.i18n?.t ? this.app.i18n.t('Logger Pro') : '日志管理 Pro';
     const icon = 'FileTextOutlined';
     const menuKey = 'logger-pro';
     const pageName = `${menuKey}.index`;
