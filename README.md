@@ -1,5 +1,14 @@
 # NocoBase 插件：日志与审计管理 Pro (Plugin Logger Pro)
 
+<p align="left">
+  <b>简体中文</b> | <a href="./README_EN.md">English</a>
+</p>
+
+[![Views](https://komarev.com/ghpvc/?username=nocobase-plugin-logger-pro&color=007ec6&style=flat-square&label=Views)](https://github.com/STlxx-lin/nocobase-plugin-logger-pro)
+[![Version](https://img.shields.io/badge/version-v0.1.15-blue.svg)](https://github.com/STlxx-lin/nocobase-plugin-logger-pro/releases)
+[![NocoBase Version](https://img.shields.io/badge/NocoBase-2.x-brightgreen.svg)](https://www.nocobase.com)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 `@nocobase/plugin-logger-pro` 是专为 NocoBase 打造的企业级系统日志控制台、全链路请求追踪、AI 错误日志智能诊断与全方位操作审计管理插件。
 
 作为官方基础日志功能的完全上位替代与拓展升级，不仅 100% 兼容系统原有日志下载与诊断收集接口，更提供了现代化高颜值的运维看板、实时终端日志控制台、全链路请求生命周期追踪、AI 错误日志智能根因分析、用户操作审计追踪（修改前后 Diff 对比）、运行时日志级别动态热更新、慢 SQL 监控、日志生命周期归档清理、插件数据占用分析，以及多渠道异常告警体系。
