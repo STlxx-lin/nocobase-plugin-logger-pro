@@ -6,7 +6,7 @@
   "description.zh-CN": "企业级系统日志控制台、动态日志配置、用户操作审计日志、数据变更Diff对比及多渠道异常告警管理。",
   "homepage": "https://github.com/STlxx-lin/nocobase-plugin-logger-pro",
   "homepage.zh-CN": "https://github.com/STlxx-lin/nocobase-plugin-logger-pro",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "main": "server.js",
   "client": "client.js",
   "files": [
@@ -26,14 +26,14 @@
     ]
   },
   "peerDependencies": {
-    "@nocobase/actions": "2.x",
-    "@nocobase/client": "2.x",
-    "@nocobase/client-v2": "2.x",
-    "@nocobase/database": "2.x",
-    "@nocobase/logger": "2.x",
-    "@nocobase/server": "2.x",
-    "@nocobase/test": "2.x",
-    "@nocobase/utils": "2.x"
+    "@nocobase/actions": "2.2.10",
+    "@nocobase/client": "2.2.10",
+    "@nocobase/client-v2": "2.2.10",
+    "@nocobase/database": "2.2.10",
+    "@nocobase/logger": "2.2.10",
+    "@nocobase/server": "2.2.10",
+    "@nocobase/test": "2.2.10",
+    "@nocobase/utils": "2.2.10"
   },
   "dependencies": {
     "tar-fs": "^3.0.4"

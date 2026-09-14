@@ -13,7 +13,19 @@ export class PluginLoggerProClient extends Plugin {
     const manager = this.app?.pluginSettingsManager as any;
     if (!manager) return;
 
-    const title = this.app?.i18n?.t ? this.app.i18n.t('Logger Pro') : '日志管理 Pro';
+    let title = '日志管理 Pro';
+    try {
+      const i18n = this.app?.i18n;
+      const res = i18n?.t ? i18n.t('Logger Pro', { ns: ['@nocobase/plugin-logger-pro', 'client'] }) : null;
+      if (res && res !== 'Logger Pro') {
+        title = res;
+      } else {
+        const lang = (i18n?.language || (typeof window !== 'undefined' ? localStorage.getItem('NOCOBASE_LOCALE') : '') || '').toLowerCase();
+        title = (!lang || lang.startsWith('zh')) ? '日志管理 Pro' : (res || 'Logger Pro');
+      }
+    } catch (e) {
+      title = '日志管理 Pro';
+    }
     const icon = 'FileTextOutlined';
     const menuKey = 'logger-pro';
     const pageName = `${menuKey}.index`;

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Card, Row, Col, Statistic, Table, Progress, Button, Tag, Space, Alert, Empty, Modal, Tooltip, message } from 'antd';
+import { Card, Row, Col, Statistic, Table, Progress, Button, Tag, Space, Alert, Empty, Modal, Tooltip, message, theme } from 'antd';
 import {
   LineChartOutlined,
   ExclamationCircleOutlined,
@@ -15,6 +15,7 @@ import {
 import { useLoggerProAPI } from '../context/LoggerProContext';
 
 export const DashboardTab: React.FC = () => {
+  const { token } = theme.useToken();
   const api = useLoggerProAPI();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any>(null);
@@ -63,42 +64,42 @@ export const DashboardTab: React.FC = () => {
       {/* 统计指标卡片 */}
       <Row gutter={[16, 16]}>
         <Col xs={24} sm={12} md={6}>
-          <Card bordered hoverable style={{ background: 'linear-gradient(135deg, #e6f7ff 0%, #ffffff 100%)' }}>
+          <Card bordered hoverable style={{ background: `linear-gradient(135deg, rgba(24, 144, 255, 0.12) 0%, ${token.colorBgContainer} 100%)`, backgroundColor: token.colorBgContainer }}>
             <Statistic
               title={<span style={{ fontWeight: 500 }}><LineChartOutlined /> 今日操作审计量</span>}
               value={summary.todayAuditCount ?? 0}
               valueStyle={{ color: '#1890ff', fontWeight: 'bold' }}
-              suffix={<span style={{ fontSize: 13, color: '#8c8c8c' }}>/ 累计 {summary.totalAuditCount ?? 0}</span>}
+              suffix={<span style={{ fontSize: 13, color: token.colorTextTertiary }}>/ 累计 {summary.totalAuditCount ?? 0}</span>}
             />
           </Card>
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Card bordered hoverable style={{ background: 'linear-gradient(135deg, #fff1f0 0%, #ffffff 100%)' }}>
+          <Card bordered hoverable style={{ background: `linear-gradient(135deg, rgba(255, 77, 79, 0.12) 0%, ${token.colorBgContainer} 100%)`, backgroundColor: token.colorBgContainer }}>
             <Statistic
               title={<span style={{ fontWeight: 500 }}><ExclamationCircleOutlined /> 今日异常错误数</span>}
               value={summary.todayErrorCount ?? 0}
               valueStyle={{ color: summary.todayErrorCount > 0 ? '#ff4d4f' : '#52c41a', fontWeight: 'bold' }}
-              suffix={<span style={{ fontSize: 13, color: '#8c8c8c' }}>次</span>}
+              suffix={<span style={{ fontSize: 13, color: token.colorTextTertiary }}>次</span>}
             />
           </Card>
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Card bordered hoverable style={{ background: 'linear-gradient(135deg, #f6ffed 0%, #ffffff 100%)' }}>
+          <Card bordered hoverable style={{ background: `linear-gradient(135deg, rgba(82, 196, 26, 0.12) 0%, ${token.colorBgContainer} 100%)`, backgroundColor: token.colorBgContainer }}>
             <Statistic
               title={<span style={{ fontWeight: 500 }}><FileTextOutlined /> 今日告警触发</span>}
               value={summary.todayAlertCount ?? 0}
               valueStyle={{ color: summary.todayAlertCount > 0 ? '#faad14' : '#52c41a', fontWeight: 'bold' }}
-              suffix={<span style={{ fontSize: 13, color: '#8c8c8c' }}>次</span>}
+              suffix={<span style={{ fontSize: 13, color: token.colorTextTertiary }}>次</span>}
             />
           </Card>
         </Col>
         <Col xs={24} sm={12} md={6}>
-          <Card bordered hoverable style={{ background: 'linear-gradient(135deg, #f9f0ff 0%, #ffffff 100%)' }}>
+          <Card bordered hoverable style={{ background: `linear-gradient(135deg, rgba(114, 46, 209, 0.12) 0%, ${token.colorBgContainer} 100%)`, backgroundColor: token.colorBgContainer }}>
             <Statistic
               title={<span style={{ fontWeight: 500 }}><HddOutlined /> 日志磁盘占用</span>}
               value={summary.totalDiskFormatted ?? '0 MB'}
               valueStyle={{ color: '#722ed1', fontWeight: 'bold' }}
-              suffix={<span style={{ fontSize: 13, color: '#8c8c8c' }}>({summary.totalLogFiles ?? 0} 个文件)</span>}
+              suffix={<span style={{ fontSize: 13, color: token.colorTextTertiary }}>({summary.totalLogFiles ?? 0} 个文件)</span>}
             />
           </Card>
         </Col>

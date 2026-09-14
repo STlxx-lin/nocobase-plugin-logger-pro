@@ -16,6 +16,7 @@ import {
   Collapse,
   message,
   Typography,
+  theme,
 } from 'antd';
 import {
   DeploymentUnitOutlined,
@@ -33,6 +34,7 @@ import { useLoggerProAPI } from '../context/LoggerProContext';
 const { Text } = Typography;
 
 export const TraceTab: React.FC = () => {
+  const { token } = theme.useToken();
   const api = useLoggerProAPI();
   const [reqIdInput, setReqIdInput] = useState('');
   const [currentReqId, setCurrentReqId] = useState<string | null>(null);
@@ -186,10 +188,10 @@ export const TraceTab: React.FC = () => {
             title={
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <Space>
-                  <ClockCircleOutlined style={{ color: '#1890ff' }} />
+                  <ClockCircleOutlined style={{ color: token.colorPrimary }} />
                   <strong>最近 API 请求列表</strong>
                 </Space>
-                <span style={{ fontSize: 12, color: '#8c8c8c' }}>点击快速追踪</span>
+                <span style={{ fontSize: 12, color: token.colorTextSecondary }}>点击快速追踪</span>
               </div>
             }
             bodyStyle={{ padding: 0 }}
@@ -215,11 +217,11 @@ export const TraceTab: React.FC = () => {
                         <Tag color={getMethodColor(r.method)} style={{ margin: 0, fontSize: 10, lineHeight: '16px' }}>
                           {r.method}
                         </Tag>
-                        <span style={{ fontWeight: 600, fontSize: 12, color: '#262626' }}>
+                        <span style={{ fontWeight: 600, fontSize: 12, color: token.colorText }}>
                           {r.collectionName || path || '-'}
                         </span>
                       </div>
-                      <div style={{ fontSize: 11, color: '#8c8c8c', fontFamily: 'monospace' }}>
+                      <div style={{ fontSize: 11, color: token.colorTextSecondary, fontFamily: 'monospace' }}>
                         {r.reqId?.slice(0, 16)}...
                       </div>
                     </div>
@@ -234,7 +236,7 @@ export const TraceTab: React.FC = () => {
                       <Tag color={code < 400 ? 'green' : 'red'} style={{ margin: 0, fontSize: 10 }}>
                         {code}
                       </Tag>
-                      <div style={{ fontSize: 11, color: '#8c8c8c', marginTop: 2 }}>
+                      <div style={{ fontSize: 11, color: token.colorTextSecondary, marginTop: 2 }}>
                         {r.durationMs || 0}ms
                       </div>
                     </div>
@@ -251,7 +253,7 @@ export const TraceTab: React.FC = () => {
             {currentReqId && traceData ? (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
                 {/* A. 请求概要 */}
-                <Card size="small" bordered style={{ backgroundColor: '#fafafa' }}>
+                <Card size="small" bordered style={{ backgroundColor: token.colorFillAlter, borderColor: token.colorBorderSecondary }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                     <Space wrap>
                       {summary.method && (
@@ -259,7 +261,7 @@ export const TraceTab: React.FC = () => {
                           {summary.method}
                         </Tag>
                       )}
-                      <code style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>{summary.path || '(无对应路径)'}</code>
+                      <code style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>{summary.path || '(无对应路径)'}</code>
                       {summary.statusCode !== undefined && (
                         <Tag color={summary.statusCode < 400 ? 'success' : 'error'} style={{ fontWeight: 600 }}>
                           HTTP {summary.statusCode}
@@ -302,7 +304,7 @@ export const TraceTab: React.FC = () => {
                   size="small"
                   title={
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <DeploymentUnitOutlined style={{ color: '#1890ff' }} />
+                      <DeploymentUnitOutlined style={{ color: token.colorPrimary }} />
                       <strong>全生命周期时序瀑布流 (Trace Timeline)</strong>
                       <Tag color="blue">{timeline.length} 个事件节点</Tag>
                     </div>
@@ -318,14 +320,14 @@ export const TraceTab: React.FC = () => {
                         >
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                             <div>
-                              <span style={{ fontWeight: 600, fontSize: 13, color: '#262626' }}>{event.title}</span>
+                              <span style={{ fontWeight: 600, fontSize: 13, color: token.colorText }}>{event.title}</span>
                               {event.durationMs !== undefined && (
                                 <Tag color="purple" style={{ marginLeft: 8, fontSize: 11 }}>
                                   {event.durationMs} ms
                                 </Tag>
                               )}
                             </div>
-                            <span style={{ fontSize: 12, color: '#8c8c8c' }}>{event.time}</span>
+                            <span style={{ fontSize: 12, color: token.colorTextSecondary }}>{event.time}</span>
                           </div>
 
                           {event.detail && (
@@ -349,21 +351,21 @@ export const TraceTab: React.FC = () => {
                               ) : event.type === 'error' ? (
                                 <pre
                                   style={{
-                                    backgroundColor: '#fff1f0',
-                                    color: '#cf1322',
+                                    backgroundColor: token.colorErrorBg,
+                                    color: token.colorErrorText,
                                     padding: '8px 12px',
                                     borderRadius: 4,
                                     fontSize: 12,
                                     whiteSpace: 'pre-wrap',
                                     wordBreak: 'break-all',
                                     margin: 0,
-                                    border: '1px solid #ffa39e',
+                                    border: `1px solid ${token.colorErrorBorder}`,
                                   }}
                                 >
                                   {event.detail}
                                 </pre>
                               ) : (
-                                <div style={{ fontSize: 12, color: '#595959' }}>{event.detail}</div>
+                                <div style={{ fontSize: 12, color: token.colorTextSecondary }}>{event.detail}</div>
                               )}
                             </div>
                           )}
@@ -373,7 +375,8 @@ export const TraceTab: React.FC = () => {
                               <Collapse.Panel header="查看关联参数与快照数据" key="1">
                                 <pre
                                   style={{
-                                    backgroundColor: '#f5f5f5',
+                                    backgroundColor: token.colorFillAlter,
+                                    color: token.colorText,
                                     padding: 8,
                                     borderRadius: 4,
                                     fontSize: 11,
@@ -391,7 +394,7 @@ export const TraceTab: React.FC = () => {
                       ))}
                     </Timeline>
                   ) : (
-                    <div style={{ textAlign: 'center', padding: 24, color: '#8c8c8c' }}>
+                    <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary }}>
                       未检索到与该 ReqId 相关的详细时序节点
                     </div>
                   )}
@@ -440,7 +443,7 @@ export const TraceTab: React.FC = () => {
                       })}
                     </div>
                   ) : (
-                    <div style={{ textAlign: 'center', padding: 16, color: '#8c8c8c', fontSize: 12 }}>
+                    <div style={{ textAlign: 'center', padding: 16, color: token.colorTextSecondary, fontSize: 12 }}>
                       暂未在近期日志文件中匹配到关联行
                     </div>
                   )}

@@ -12,6 +12,7 @@ import {
   Button,
   message,
   Typography,
+  theme,
 } from 'antd';
 import {
   DeploymentUnitOutlined,
@@ -37,6 +38,7 @@ export interface TraceDrawerProps {
 }
 
 export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClose }) => {
+  const { token } = theme.useToken();
   const api = useLoggerProAPI();
   const [loading, setLoading] = useState(false);
   const [traceData, setTraceData] = useState<any>(null);
@@ -143,7 +145,7 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
         {reqId && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             {/* 1. 请求核心概要卡片 */}
-            <Card size="small" bordered style={{ backgroundColor: '#fafafa' }}>
+            <Card size="small" bordered style={{ backgroundColor: token.colorFillAlter, borderColor: token.colorBorderSecondary }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
                 <Space wrap>
                   {summary.method && (
@@ -151,7 +153,7 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
                       {summary.method}
                     </Tag>
                   )}
-                  <code style={{ fontSize: 13, fontWeight: 600, color: '#262626' }}>{summary.path || '(无对应路径)'}</code>
+                  <code style={{ fontSize: 13, fontWeight: 600, color: token.colorText }}>{summary.path || '(无对应路径)'}</code>
                   {summary.statusCode !== undefined && (
                     <Tag color={summary.statusCode < 400 ? 'success' : 'error'} style={{ fontWeight: 600 }}>
                       HTTP {summary.statusCode}
@@ -204,7 +206,7 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
               size="small"
               title={
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <ClockCircleOutlined style={{ color: '#1890ff' }} />
+                  <ClockCircleOutlined style={{ color: token.colorPrimary }} />
                   <strong>时序事件瀑布流 (Timeline Events)</strong>
                   <Tag color="blue">{timeline.length} 个节点</Tag>
                 </div>
@@ -220,14 +222,14 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
                     >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                         <div>
-                          <span style={{ fontWeight: 600, fontSize: 13, color: '#262626' }}>{event.title}</span>
+                          <span style={{ fontWeight: 600, fontSize: 13, color: token.colorText }}>{event.title}</span>
                           {event.durationMs !== undefined && (
                             <Tag color="purple" style={{ marginLeft: 8, fontSize: 11 }}>
                               {event.durationMs} ms
                             </Tag>
                           )}
                         </div>
-                        <span style={{ fontSize: 12, color: '#8c8c8c' }}>{event.time}</span>
+                        <span style={{ fontSize: 12, color: token.colorTextSecondary }}>{event.time}</span>
                       </div>
 
                       {/* 详细描述 */}
@@ -252,21 +254,21 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
                           ) : event.type === 'error' ? (
                             <pre
                               style={{
-                                backgroundColor: '#fff1f0',
-                                color: '#cf1322',
+                                backgroundColor: token.colorErrorBg,
+                                color: token.colorErrorText,
                                 padding: '8px 12px',
                                 borderRadius: 4,
                                 fontSize: 12,
                                 whiteSpace: 'pre-wrap',
                                 wordBreak: 'break-all',
                                 margin: 0,
-                                border: '1px solid #ffa39e',
+                                border: `1px solid ${token.colorErrorBorder}`,
                               }}
                             >
                               {event.detail}
                             </pre>
                           ) : (
-                            <div style={{ fontSize: 12, color: '#595959', lineHeight: '18px' }}>
+                            <div style={{ fontSize: 12, color: token.colorTextSecondary, lineHeight: '18px' }}>
                               {event.detail}
                             </div>
                           )}
@@ -279,7 +281,8 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
                           <Collapse.Panel header="查看关联参数与快照数据" key="1">
                             <pre
                               style={{
-                                backgroundColor: '#f5f5f5',
+                                backgroundColor: token.colorFillAlter,
+                                color: token.colorText,
                                 padding: 8,
                                 borderRadius: 4,
                                 fontSize: 11,
@@ -297,7 +300,7 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
                   ))}
                 </Timeline>
               ) : (
-                <div style={{ textAlign: 'center', padding: 24, color: '#8c8c8c' }}>
+                <div style={{ textAlign: 'center', padding: 24, color: token.colorTextSecondary }}>
                   未检索到与该 ReqId 相关的详细时序节点
                 </div>
               )}

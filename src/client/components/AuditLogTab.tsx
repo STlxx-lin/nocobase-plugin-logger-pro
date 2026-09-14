@@ -12,6 +12,7 @@ import {
   message,
   Tooltip,
   Spin,
+  theme,
 } from 'antd';
 import {
   SearchOutlined,
@@ -30,6 +31,7 @@ import { AuditLogExportDrawer } from './AuditLogExportDrawer';
 import { TraceDrawer } from './TraceDrawer';
 
 export const AuditLogTab: React.FC = () => {
+  const { token } = theme.useToken();
   const api = useLoggerProAPI();
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<any[]>([]);
@@ -430,22 +432,22 @@ export const AuditLogTab: React.FC = () => {
               {drawerRecord.errorMessage && (
                 <div>
                   <h4 style={{ color: '#ff4d4f', fontWeight: 600 }}>❌ 异常错误信息</h4>
-                  <pre style={{ background: '#fff1f0', padding: 12, borderRadius: 6, color: '#cf1322', whiteSpace: 'pre-wrap' }}>
+                  <pre style={{ background: token.colorErrorBg, border: `1px solid ${token.colorErrorBorder}`, padding: 12, borderRadius: 6, color: token.colorErrorText, whiteSpace: 'pre-wrap' }}>
                     {drawerRecord.errorMessage}
                   </pre>
                 </div>
               )}
 
               <div>
-                <h4 style={{ fontWeight: 600 }}>📦 请求参数 (Params / Values)</h4>
-                <pre style={{ background: '#f5f5f5', padding: 12, borderRadius: 6, maxHeight: 300, overflow: 'auto', fontSize: 12 }}>
+                <h4 style={{ fontWeight: 600, color: token.colorText }}>📦 请求参数 (Params / Values)</h4>
+                <pre style={{ background: token.colorFillAlter, border: `1px solid ${token.colorBorderSecondary}`, color: token.colorText, padding: 12, borderRadius: 6, maxHeight: 300, overflow: 'auto', fontSize: 12 }}>
                   {JSON.stringify(drawerRecord.params, null, 2) || '(空)'}
                 </pre>
               </div>
 
               <div>
-                <h4 style={{ fontWeight: 600 }}>🌐 客户端 User-Agent</h4>
-                <div style={{ background: '#fafafa', padding: 12, borderRadius: 6, fontSize: 12, color: '#595959', wordBreak: 'break-all' }}>
+                <h4 style={{ fontWeight: 600, color: token.colorText }}>🌐 客户端 User-Agent</h4>
+                <div style={{ background: token.colorFillAlter, border: `1px solid ${token.colorBorderSecondary}`, padding: 12, borderRadius: 6, fontSize: 12, color: token.colorTextSecondary, wordBreak: 'break-all' }}>
                   {drawerRecord.userAgent || '-'}
                 </div>
               </div>

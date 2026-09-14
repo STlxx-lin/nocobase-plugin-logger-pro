@@ -1,11 +1,11 @@
-﻿# NocoBase Plugin: Logger & Audit Management Pro (`@nocobase/plugin-logger-pro`)
+# NocoBase Plugin: Logger & Audit Management Pro (`@nocobase/plugin-logger-pro`)
 
 <p align="left">
   <b>English</b> | <a href="./README.md">简体中文</a>
 </p>
 
 [![Views](https://komarev.com/ghpvc/?username=nocobase-plugin-logger-pro&color=007ec6&style=flat-square&label=Views)](https://github.com/STlxx-lin/nocobase-plugin-logger-pro)
-[![Version](https://img.shields.io/badge/version-v0.1.15-blue.svg)](https://github.com/STlxx-lin/nocobase-plugin-logger-pro/releases)
+[![Version](https://img.shields.io/badge/version-v0.1.16-blue.svg)](https://github.com/STlxx-lin/nocobase-plugin-logger-pro/releases)
 [![NocoBase Version](https://img.shields.io/badge/NocoBase-2.x-brightgreen.svg)](https://www.nocobase.com)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

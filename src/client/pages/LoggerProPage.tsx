@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Card, Tabs } from 'antd';
+import { Card, Tabs, theme } from 'antd';
 import {
   DashboardOutlined,
   CodeOutlined,
@@ -21,11 +21,12 @@ export interface LoggerProPageProps {
 }
 
 export const LoggerProPage: React.FC<LoggerProPageProps> = ({ api }) => {
+  const { token } = theme.useToken();
   const [activeTab, setActiveTab] = useState('dashboard');
 
   return (
     <LoggerProContext.Provider value={{ api }}>
-      <div style={{ padding: '20px 24px', background: '#f0f2f5', minHeight: '100%' }}>
+      <div style={{ padding: '20px 24px', background: token.colorBgLayout, minHeight: '100%' }}>
         <Card
           bordered={false}
           style={{
@@ -35,7 +36,7 @@ export const LoggerProPage: React.FC<LoggerProPageProps> = ({ api }) => {
           bodyStyle={{ padding: '16px 24px 24px' }}
         >
         <div style={{ marginBottom: 16 }}>
-          <h2 style={{ margin: '0 0 4px 0', fontSize: 20, fontWeight: 600, color: '#1f1f1f' }}>
+          <h2 style={{ margin: '0 0 4px 0', fontSize: 20, fontWeight: 600, color: token.colorText }}>
             📜 日志与审计管理 Pro (Logger Pro)
           </h2>
           <p style={{ margin: 0, color: '#8c8c8c', fontSize: 13 }}>

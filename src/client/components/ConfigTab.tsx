@@ -21,6 +21,7 @@ import {
   Progress,
   Tooltip,
   Modal,
+  theme,
 } from 'antd';
 import {
   SaveOutlined,
@@ -39,6 +40,7 @@ import {
 import { useLoggerProAPI } from '../context/LoggerProContext';
 
 export const ConfigTab: React.FC = () => {
+  const { token } = theme.useToken();
   const api = useLoggerProAPI();
   const [form] = Form.useForm();
   const [loading, setLoading] = useState(false);
@@ -387,7 +389,7 @@ export const ConfigTab: React.FC = () => {
       render: (text: string, rec: any) => (
         <div>
           <strong>{text}</strong>
-          <div style={{ fontSize: 11, color: '#8c8c8c' }}>{rec.collection}</div>
+          <div style={{ fontSize: 11, color: token.colorTextSecondary }}>{rec.collection}</div>
         </div>
       ),
     },
@@ -401,7 +403,7 @@ export const ConfigTab: React.FC = () => {
       title: '预估占用空间',
       dataIndex: 'estimatedFormatted',
       key: 'estimatedFormatted',
-      render: (val: string) => <span style={{ fontWeight: 600, color: '#595959' }}>{val}</span>,
+      render: (val: string) => <span style={{ fontWeight: 600, color: token.colorText }}>{val}</span>,
     },
     {
       title: '空间维护操作',
@@ -435,7 +437,7 @@ export const ConfigTab: React.FC = () => {
             </Popconfirm>
           </Space>
         ) : (
-          <span style={{ color: '#bfbfbf', fontSize: 12 }}>-</span>
+          <span style={{ color: token.colorTextPlaceholder, fontSize: 12 }}>-</span>
         )
       ),
     },
@@ -451,14 +453,14 @@ export const ConfigTab: React.FC = () => {
               size="small"
               bordered
               style={{
-                backgroundColor: '#ffffff',
-                borderLeft: '4px solid #1890ff',
-                boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+                backgroundColor: token.colorBgContainer,
+                borderLeft: `4px solid ${token.colorPrimary}`,
+                boxShadow: token.boxShadowTertiary,
               }}
               title={
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                   <Space>
-                    <HddOutlined style={{ color: '#1890ff', fontSize: 16 }} />
+                    <HddOutlined style={{ color: token.colorPrimary, fontSize: 16 }} />
                     <strong style={{ fontSize: 14 }}>📊 插件数据与存储空间占用分析 (Plugin Storage & Data Usage)</strong>
                   </Space>
                   <Button
@@ -475,41 +477,41 @@ export const ConfigTab: React.FC = () => {
               {/* 3 个总览卡片 */}
               <Row gutter={[16, 16]} style={{ marginBottom: 16 }}>
                 <Col xs={24} sm={8}>
-                  <Card size="small" style={{ backgroundColor: '#f0f5ff', borderColor: '#adc6ff' }}>
+                  <Card size="small" style={{ backgroundColor: token.colorInfoBg, borderColor: token.colorInfoBorder }}>
                     <Statistic
-                      title={<span style={{ color: '#1d39c4' }}><FileTextOutlined /> 日志文件磁盘占用</span>}
+                      title={<span style={{ color: token.colorInfoText }}><FileTextOutlined /> 日志文件磁盘占用</span>}
                       value={storageStats?.fileStats?.totalSizeFormatted || '0 B'}
-                      suffix={<span style={{ fontSize: 12, color: '#595959' }}>({storageStats?.fileStats?.totalFiles || 0} 个文件)</span>}
-                      valueStyle={{ color: '#1d39c4', fontWeight: 600 }}
+                      suffix={<span style={{ fontSize: 12, color: token.colorTextSecondary }}>({storageStats?.fileStats?.totalFiles || 0} 个文件)</span>}
+                      valueStyle={{ color: token.colorInfoText, fontWeight: 600 }}
                     />
-                    <div style={{ marginTop: 8, fontSize: 11, color: '#595959' }}>
+                    <div style={{ marginTop: 8, fontSize: 11, color: token.colorTextSecondary }}>
                       请求: {storageStats?.fileStats?.categories?.requestLogs?.formatted || '0 B'} | 系统: {storageStats?.fileStats?.categories?.systemLogs?.formatted || '0 B'} | SQL: {storageStats?.fileStats?.categories?.sqlLogs?.formatted || '0 B'}
                     </div>
                   </Card>
                 </Col>
 
                 <Col xs={24} sm={8}>
-                  <Card size="small" style={{ backgroundColor: '#f6ffed', borderColor: '#b7eb8f' }}>
+                  <Card size="small" style={{ backgroundColor: token.colorSuccessBg, borderColor: token.colorSuccessBorder }}>
                     <Statistic
-                      title={<span style={{ color: '#237804' }}><DatabaseOutlined /> 数据库表数据占用</span>}
+                      title={<span style={{ color: token.colorSuccess }}><DatabaseOutlined /> 数据库表数据占用</span>}
                       value={storageStats?.dbStats?.estimatedSizeFormatted || '0 B'}
-                      suffix={<span style={{ fontSize: 12, color: '#595959' }}>({(storageStats?.dbStats?.totalRows || 0).toLocaleString()} 行)</span>}
-                      valueStyle={{ color: '#237804', fontWeight: 600 }}
+                      suffix={<span style={{ fontSize: 12, color: token.colorTextSecondary }}>({(storageStats?.dbStats?.totalRows || 0).toLocaleString()} 行)</span>}
+                      valueStyle={{ color: token.colorSuccess, fontWeight: 600 }}
                     />
-                    <div style={{ marginTop: 8, fontSize: 11, color: '#595959' }}>
+                    <div style={{ marginTop: 8, fontSize: 11, color: token.colorTextSecondary }}>
                       含审计记录、AI 诊断历史、告警日志等 5 张核心业务表
                     </div>
                   </Card>
                 </Col>
 
                 <Col xs={24} sm={8}>
-                  <Card size="small" style={{ backgroundColor: '#f9f0ff', borderColor: '#d3adf7' }}>
+                  <Card size="small" style={{ backgroundColor: token.colorFillAlter, borderColor: token.colorBorderSecondary }}>
                     <Statistic
-                      title={<span style={{ color: '#531dab' }}><HddOutlined /> 插件总体空间占用</span>}
+                      title={<span style={{ color: token.colorPrimary }}><HddOutlined /> 插件总体空间占用</span>}
                       value={storageStats?.totalSizeFormatted || '0 B'}
-                      valueStyle={{ color: '#531dab', fontWeight: 600 }}
+                      valueStyle={{ color: token.colorPrimary, fontWeight: 600 }}
                     />
-                    <div style={{ marginTop: 8, fontSize: 11, color: '#595959' }}>
+                    <div style={{ marginTop: 8, fontSize: 11, color: token.colorTextSecondary }}>
                       磁盘配额上限: {form.getFieldValue('max_disk_size_mb') || 2048} MB
                     </div>
                   </Card>
@@ -518,7 +520,7 @@ export const ConfigTab: React.FC = () => {
 
               {/* 数据库表占用表格 */}
               <div style={{ marginTop: 8 }}>
-                <div style={{ marginBottom: 8, fontWeight: 600, color: '#262626', fontSize: 13 }}>
+                <div style={{ marginBottom: 8, fontWeight: 600, color: token.colorText, fontSize: 13 }}>
                   🗄️ 插件数据表明细与空间释放:
                 </div>
                 <Table
@@ -795,9 +797,9 @@ export const ConfigTab: React.FC = () => {
       <Modal
         title={
           <Space>
-            {cleanStatus === 'running' && <LoadingOutlined style={{ color: '#1890ff' }} />}
-            {cleanStatus === 'completed' && <CheckCircleOutlined style={{ color: '#52c41a' }} />}
-            {cleanStatus === 'error' && <CloseCircleOutlined style={{ color: '#ff4d4f' }} />}
+            {cleanStatus === 'running' && <LoadingOutlined style={{ color: token.colorPrimary }} />}
+            {cleanStatus === 'completed' && <CheckCircleOutlined style={{ color: token.colorSuccess }} />}
+            {cleanStatus === 'error' && <CloseCircleOutlined style={{ color: token.colorError }} />}
             <span style={{ fontWeight: 600 }}>{progressTitle || '数据清理进度'}</span>
           </Space>
         }
@@ -851,8 +853,8 @@ export const ConfigTab: React.FC = () => {
                   : 'active'
               }
               strokeColor={{
-                '0%': '#1890ff',
-                '100%': '#52c41a',
+                '0%': token.colorPrimary,
+                '100%': token.colorSuccess,
               }}
               strokeWidth={12}
             />
@@ -861,7 +863,7 @@ export const ConfigTab: React.FC = () => {
           {/* 核心指标看板 */}
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={8}>
-              <Card size="small" style={{ textAlign: 'center', background: '#f5f5f5' }}>
+              <Card size="small" style={{ textAlign: 'center', background: token.colorFillAlter }}>
                 <Statistic
                   title="待清理总量"
                   value={totalToClean}
@@ -871,22 +873,22 @@ export const ConfigTab: React.FC = () => {
               </Card>
             </Col>
             <Col span={8}>
-              <Card size="small" style={{ textAlign: 'center', background: '#f6ffed', borderColor: '#b7eb8f' }}>
+              <Card size="small" style={{ textAlign: 'center', background: token.colorSuccessBg, borderColor: token.colorSuccessBorder }}>
                 <Statistic
                   title="已成功清理"
                   value={cleanedCount}
                   formatter={(val) => Number(val).toLocaleString() + ' 行'}
-                  valueStyle={{ fontSize: 16, fontWeight: 600, color: '#52c41a' }}
+                  valueStyle={{ fontSize: 16, fontWeight: 600, color: token.colorSuccess }}
                 />
               </Card>
             </Col>
             <Col span={8}>
-              <Card size="small" style={{ textAlign: 'center', background: '#e6f7ff', borderColor: '#91d5ff' }}>
+              <Card size="small" style={{ textAlign: 'center', background: token.colorInfoBg, borderColor: token.colorInfoBorder }}>
                 <Statistic
                   title="剩余待处理"
                   value={remainingCount}
                   formatter={(val) => Number(val).toLocaleString() + ' 行'}
-                  valueStyle={{ fontSize: 16, fontWeight: 600, color: '#1890ff' }}
+                  valueStyle={{ fontSize: 16, fontWeight: 600, color: token.colorPrimary }}
                 />
               </Card>
             </Col>
