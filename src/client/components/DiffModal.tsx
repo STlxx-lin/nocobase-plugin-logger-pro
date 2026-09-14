@@ -13,6 +13,7 @@ import {
   Table,
   Image,
   Tooltip,
+  theme,
 } from 'antd';
 import {
   SearchOutlined,
@@ -186,12 +187,16 @@ function isAttachmentItem(obj: any): boolean {
  * 单个附件卡片组件
  */
 const SingleAttachmentCard: React.FC<{ item: any; type?: 'old' | 'new' | 'neutral' }> = ({ item, type = 'neutral' }) => {
+  const { token } = theme.useToken();
   const fileName = item.title || item.filename || item.name || '未命名附件';
   const fileUrl = item.url || '';
   const isImg =
     (item.mimetype && item.mimetype.startsWith('image/')) ||
     /\.(png|jpe?g|gif|webp|svg)$/i.test(fileName) ||
     /\.(png|jpe?g|gif|webp|svg)$/i.test(fileUrl);
+
+  const bg = type === 'old' ? token.colorErrorBg : type === 'new' ? token.colorSuccessBg : token.colorFillAlter;
+  const borderCol = type === 'old' ? token.colorErrorBorder : type === 'new' ? token.colorSuccessBorder : token.colorBorderSecondary;
 
   return (
     <div
@@ -200,10 +205,9 @@ const SingleAttachmentCard: React.FC<{ item: any; type?: 'old' | 'new' | 'neutra
         alignItems: 'center',
         gap: 8,
         padding: '4px 10px',
-        background: type === 'old' ? '#fff2f0' : type === 'new' ? '#f6ffed' : '#f5f5f5',
-        border: '1px solid',
-        borderColor: type === 'old' ? '#ffa39e' : type === 'new' ? '#b7eb8f' : '#d9d9d9',
-        borderRadius: 6,
+        background: bg,
+        border: `1px solid ${borderCol}`,
+        borderRadius: token.borderRadiusSM,
         maxWidth: '100%',
         boxSizing: 'border-box',
       }}
@@ -231,7 +235,7 @@ const SingleAttachmentCard: React.FC<{ item: any; type?: 'old' | 'new' | 'neutra
               style={{
                 fontSize: 12,
                 fontWeight: 500,
-                color: '#1677ff',
+                color: token.colorPrimary,
                 maxWidth: 220,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -247,7 +251,7 @@ const SingleAttachmentCard: React.FC<{ item: any; type?: 'old' | 'new' | 'neutra
               style={{
                 fontSize: 12,
                 fontWeight: 500,
-                color: '#262626',
+                color: token.colorText,
                 maxWidth: 220,
                 overflow: 'hidden',
                 textOverflow: 'ellipsis',
@@ -260,13 +264,13 @@ const SingleAttachmentCard: React.FC<{ item: any; type?: 'old' | 'new' | 'neutra
             </span>
           )}
           {fileUrl && (
-            <a href={fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: '#8c8c8c', fontSize: 11 }}>
+            <a href={fileUrl} target="_blank" rel="noopener noreferrer" style={{ color: token.colorTextSecondary, fontSize: 11 }}>
               <LinkOutlined />
             </a>
           )}
         </div>
         {(item.size || item.extname) && (
-          <span style={{ fontSize: 10, color: '#8c8c8c' }}>
+          <span style={{ fontSize: 10, color: token.colorTextDescription }}>
             {item.extname ? String(item.extname).toUpperCase() : ''}{' '}
             {item.size ? `(${formatFileSize(Number(item.size))})` : ''}
           </span>
@@ -287,10 +291,11 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
   isDiff = false,
   type = 'neutral',
 }) => {
+  const { token } = theme.useToken();
   const [viewMode, setViewMode] = useState<'visual' | 'json'>('visual');
 
   if (value === null || value === undefined) {
-    return <span style={{ color: '#bfbfbf', fontStyle: 'italic' }}>(空 / null)</span>;
+    return <span style={{ color: token.colorTextPlaceholder, fontStyle: 'italic' }}>(空 / null)</span>;
   }
 
   if (typeof value === 'boolean') {
@@ -304,10 +309,10 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
       const formatted = isNaN(d.getTime()) ? value : d.toLocaleString();
       return (
         <Space size={6} style={{ verticalAlign: 'middle' }}>
-          <CalendarOutlined style={{ color: '#1677ff' }} />
-          <span style={{ fontWeight: 500, color: '#262626' }}>{formatted}</span>
+          <CalendarOutlined style={{ color: token.colorPrimary }} />
+          <span style={{ fontWeight: 500, color: token.colorText }}>{formatted}</span>
           <Tooltip title={`原始值: ${value}`}>
-            <Tag style={{ fontSize: 10, padding: '0 4px', color: '#8c8c8c', cursor: 'help' }}>ISO</Tag>
+            <Tag style={{ fontSize: 10, padding: '0 4px', color: token.colorTextSecondary, cursor: 'help' }}>ISO</Tag>
           </Tooltip>
         </Space>
       );
@@ -327,14 +332,14 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
   // 数组结构（标签列表、附件列表、关联子表格等）
   if (Array.isArray(value)) {
     if (value.length === 0) {
-      return <span style={{ color: '#bfbfbf', fontStyle: 'italic' }}>[] (空数组)</span>;
+      return <span style={{ color: token.colorTextPlaceholder, fontStyle: 'italic' }}>[] (空数组)</span>;
     }
 
     // 附件数组
     if (value.every((item) => isAttachmentItem(item))) {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 11, color: '#8c8c8c' }}>
+          <div style={{ fontSize: 11, color: token.colorTextSecondary }}>
             <PaperClipOutlined style={{ marginRight: 4 }} /> 共 {value.length} 个附件
           </div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
@@ -367,7 +372,7 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
     if (onlyHasIds) {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 11, color: '#8c8c8c' }}>📦 包含 {value.length} 条关联 ID</div>
+          <div style={{ fontSize: 11, color: token.colorTextSecondary }}>📦 包含 {value.length} 条关联 ID</div>
           <Space wrap size={[6, 6]}>
             {value.map((item: any, idx: number) => {
               const displayId = item.id || item.ID || item.key || item;
@@ -375,7 +380,7 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
                 <Tag
                   key={idx}
                   color={type === 'old' ? 'volcano' : type === 'new' ? 'green' : 'cyan'}
-                  style={{ fontSize: 12, padding: '2px 8px', borderRadius: 4 }}
+                  style={{ fontSize: 12, padding: '2px 8px', borderRadius: token.borderRadiusSM }}
                 >
                   #{displayId}
                 </Tag>
@@ -398,7 +403,7 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
         title: '#',
         key: '_index',
         width: 45,
-        render: (_: any, __: any, index: number) => <span style={{ color: '#8c8c8c', fontSize: 11 }}>{index + 1}</span>,
+        render: (_: any, __: any, index: number) => <span style={{ color: token.colorTextSecondary, fontSize: 11 }}>{index + 1}</span>,
       },
       ...allObjKeys.slice(0, 8).map((colKey) => ({
         title: <span style={{ fontSize: 11 }}>{parseI18nTitle(colKey, colKey)}</span>,
@@ -406,9 +411,9 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
         key: colKey,
         ellipsis: true,
         render: (cellVal: any) => {
-          if (cellVal === null || cellVal === undefined) return <span style={{ color: '#bfbfbf' }}>-</span>;
-          if (typeof cellVal === 'object') return <span style={{ color: '#1677ff' }}>[Object]</span>;
-          return <span style={{ fontSize: 12 }}>{String(cellVal)}</span>;
+          if (cellVal === null || cellVal === undefined) return <span style={{ color: token.colorTextPlaceholder }}>-</span>;
+          if (typeof cellVal === 'object') return <span style={{ color: token.colorPrimary }}>[Object]</span>;
+          return <span style={{ fontSize: 12, color: token.colorText }}>{String(cellVal)}</span>;
         },
       })),
     ];
@@ -416,7 +421,7 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 2 }}>
-          <span style={{ fontSize: 11, color: '#8c8c8c' }}>
+          <span style={{ fontSize: 11, color: token.colorTextSecondary }}>
             <TableOutlined style={{ marginRight: 4 }} /> 子表格 (共 {value.length} 行)
           </span>
           <Button
@@ -431,11 +436,11 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
         </div>
 
         {viewMode === 'json' ? (
-          <pre style={{ margin: 0, padding: 8, background: 'rgba(0,0,0,0.03)', borderRadius: 4, fontSize: 11, maxHeight: 180, overflow: 'auto' }}>
+          <pre style={{ margin: 0, padding: 8, background: token.colorFillAlter, border: `1px solid ${token.colorBorderSecondary}`, color: token.colorText, borderRadius: token.borderRadiusSM, fontSize: 11, maxHeight: 180, overflow: 'auto' }}>
             {JSON.stringify(value, null, 2)}
           </pre>
         ) : (
-          <div style={{ border: '1px solid #f0f0f0', borderRadius: 4, overflow: 'hidden' }}>
+          <div style={{ border: `1px solid ${token.colorBorderSecondary}`, borderRadius: token.borderRadiusSM, overflow: 'hidden' }}>
             <Table
               size="small"
               bordered={false}
@@ -455,7 +460,7 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
   // 纯复杂对象结构
   const entries = Object.entries(value);
   if (entries.length === 0) {
-    return <span style={{ color: '#bfbfbf', fontStyle: 'italic' }}>{} (空对象)</span>;
+    return <span style={{ color: token.colorTextPlaceholder, fontStyle: 'italic' }}>{} (空对象)</span>;
   }
 
   return (
@@ -472,15 +477,15 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
         </Button>
       </div>
       {viewMode === 'json' ? (
-        <pre style={{ margin: 0, padding: 8, background: 'rgba(0,0,0,0.03)', borderRadius: 4, fontSize: 11, maxHeight: 180, overflow: 'auto' }}>
+        <pre style={{ margin: 0, padding: 8, background: token.colorFillAlter, border: `1px solid ${token.colorBorderSecondary}`, color: token.colorText, borderRadius: token.borderRadiusSM, fontSize: 11, maxHeight: 180, overflow: 'auto' }}>
           {JSON.stringify(value, null, 2)}
         </pre>
       ) : (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
           {entries.map(([k, v]: [string, any]) => (
             <Tag key={k} style={{ margin: 0, padding: '2px 6px' }}>
-              <span style={{ color: '#8c8c8c' }}>{parseI18nTitle(k, k)}: </span>
-              <span>
+              <span style={{ color: token.colorTextSecondary }}>{parseI18nTitle(k, k)}: </span>
+              <span style={{ color: token.colorText }}>
                 {v === null || v === undefined
                   ? 'null'
                   : typeof v === 'object'
@@ -498,6 +503,7 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
 };
 
 export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, loading = false }) => {
+  const { token } = theme.useToken();
   const api = useLoggerProAPI();
 
   // 字段中文名称元数据
@@ -667,10 +673,10 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
             justifyContent: 'space-between',
             alignItems: 'center',
             marginBottom: 12,
-            background: '#fafafa',
+            background: token.colorFillAlter,
             padding: '8px 12px',
-            borderRadius: 6,
-            border: '1px solid #f0f0f0',
+            borderRadius: token.borderRadiusSM,
+            border: `1px solid ${token.colorBorderSecondary}`,
           }}
         >
           <Radio.Group
@@ -692,7 +698,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
           <Input
             size="small"
             placeholder="搜索字段名/标题/属性值..."
-            prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
+            prefix={<SearchOutlined style={{ color: token.colorTextPlaceholder }} />}
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             allowClear
@@ -708,17 +714,17 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
                 width: '100%',
                 borderCollapse: 'collapse',
                 fontSize: 13,
-                border: '1px solid #e8e8e8',
+                border: `1px solid ${token.colorBorderSecondary}`,
                 tableLayout: 'fixed',
               }}
             >
               <thead>
-                <tr style={{ background: '#fafafa', borderBottom: '1px solid #e8e8e8' }}>
-                  <th style={{ padding: '9px 12px', textAlign: 'left', width: '28%' }}>字段名 / 标题</th>
-                  <th style={{ padding: '9px 12px', textAlign: 'left', width: '36%', color: '#cf1322' }}>
+                <tr style={{ background: token.colorFillAlter, borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
+                  <th style={{ padding: '9px 12px', textAlign: 'left', width: '28%', color: token.colorText }}>字段名 / 标题</th>
+                  <th style={{ padding: '9px 12px', textAlign: 'left', width: '36%', color: token.colorError }}>
                     变更前 (Old)
                   </th>
-                  <th style={{ padding: '9px 12px', textAlign: 'left', width: '36%', color: '#389e0d' }}>
+                  <th style={{ padding: '9px 12px', textAlign: 'left', width: '36%', color: token.colorSuccess }}>
                     变更后 (New)
                   </th>
                 </tr>
@@ -737,22 +743,22 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
                       <tr
                         key={key}
                         style={{
-                          borderBottom: '1px solid #f0f0f0',
-                          background: isChanged ? undefined : '#fafafa',
+                          borderBottom: `1px solid ${token.colorBorderSecondary}`,
+                          background: isChanged ? undefined : token.colorFillQuaternary,
                         }}
                       >
                         {/* 字段名与中文标题联合展示 */}
-                        <td style={{ padding: '8px 12px', verticalAlign: 'top' }}>
+                        <td style={{ padding: '8px 12px', verticalAlign: 'top', borderRight: `1px solid ${token.colorBorderSecondary}` }}>
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                              <span style={{ fontWeight: 600, color: '#1f1f1f', fontSize: 13 }}>
+                              <span style={{ fontWeight: 600, color: token.colorText, fontSize: 13 }}>
                                 {fieldTitle}
                               </span>
                               {isChanged && <Tag color="warning" style={{ fontSize: 10, padding: '0 4px', lineHeight: '16px' }}>变动</Tag>}
                             </div>
                             {fieldTitle !== key && (
-                              <div style={{ fontSize: 11, color: '#8c8c8c' }}>
-                                <code style={{ fontSize: 11, background: '#f5f5f5', padding: '1px 4px', borderRadius: 3 }}>
+                              <div style={{ fontSize: 11, color: token.colorTextDescription }}>
+                                <code style={{ fontSize: 11, background: token.colorFillAlter, color: token.colorTextSecondary, padding: '1px 4px', borderRadius: token.borderRadiusSM }}>
                                   {key}
                                 </code>
                               </div>
@@ -764,10 +770,10 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
                         <td
                           style={{
                             padding: '8px 12px',
-                            background: isChanged ? '#fff1f0' : 'transparent',
-                            color: isChanged ? '#a8071a' : '#595959',
+                            background: isChanged ? token.colorErrorBg : 'transparent',
+                            color: isChanged ? token.colorErrorText : token.colorTextSecondary,
                             verticalAlign: 'top',
-                            borderRight: '1px solid #f0f0f0',
+                            borderRight: `1px solid ${token.colorBorderSecondary}`,
                           }}
                         >
                           <ComplexDataViewer value={oldVal} isDiff={isChanged} type="old" />
@@ -777,8 +783,8 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
                         <td
                           style={{
                             padding: '8px 12px',
-                            background: isChanged ? '#f6ffed' : 'transparent',
-                            color: isChanged ? '#237804' : '#595959',
+                            background: isChanged ? token.colorSuccessBg : 'transparent',
+                            color: isChanged ? token.colorSuccessText : token.colorTextSecondary,
                             verticalAlign: 'top',
                           }}
                         >
@@ -799,26 +805,26 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
           </div>
         ) : isCreate && Object.keys(afterObj).length > 0 ? (
           <div>
-            <div style={{ marginBottom: 8, color: '#389e0d', fontWeight: 600 }}>
+            <div style={{ marginBottom: 8, color: token.colorSuccess, fontWeight: 600 }}>
               <CheckCircleOutlined style={{ marginRight: 6 }} /> 新增记录初始属性：
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, border: '1px solid #e8e8e8' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, border: `1px solid ${token.colorBorderSecondary}` }}>
               <thead>
-                <tr style={{ background: '#fafafa', borderBottom: '1px solid #e8e8e8' }}>
-                  <th style={{ padding: '8px 12px', textAlign: 'left', width: '32%' }}>字段名 / 标题</th>
-                  <th style={{ padding: '8px 12px', textAlign: 'left', width: '68%', color: '#389e0d' }}>新增初始值</th>
+                <tr style={{ background: token.colorFillAlter, borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', width: '32%', color: token.colorText }}>字段名 / 标题</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', width: '68%', color: token.colorSuccess }}>新增初始值</th>
                 </tr>
               </thead>
               <tbody>
                 {Object.entries(afterObj).map(([key, val]: [string, any]) => {
                   const fieldTitle = parseI18nTitle(fieldsMap[key]?.title || key, key);
                   return (
-                    <tr key={key} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                      <td style={{ padding: '8px 12px' }}>
-                        <div style={{ fontWeight: 600, color: '#1f1f1f' }}>{fieldTitle}</div>
-                        {fieldTitle !== key && <code style={{ fontSize: 11, color: '#8c8c8c' }}>{key}</code>}
+                    <tr key={key} style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
+                      <td style={{ padding: '8px 12px', borderRight: `1px solid ${token.colorBorderSecondary}` }}>
+                        <div style={{ fontWeight: 600, color: token.colorText }}>{fieldTitle}</div>
+                        {fieldTitle !== key && <code style={{ fontSize: 11, background: token.colorFillAlter, color: token.colorTextSecondary, padding: '1px 4px', borderRadius: token.borderRadiusSM }}>{key}</code>}
                       </td>
-                      <td style={{ padding: '8px 12px', background: '#f6ffed' }}>
+                      <td style={{ padding: '8px 12px', background: token.colorSuccessBg, color: token.colorSuccessText }}>
                         <ComplexDataViewer value={val} type="new" />
                       </td>
                     </tr>
@@ -829,26 +835,26 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
           </div>
         ) : isDestroy && Object.keys(beforeObj).length > 0 ? (
           <div>
-            <div style={{ marginBottom: 8, color: '#cf1322', fontWeight: 600 }}>
+            <div style={{ marginBottom: 8, color: token.colorError, fontWeight: 600 }}>
               🗑️ 删除前历史属性：
             </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, border: '1px solid #e8e8e8' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, border: `1px solid ${token.colorBorderSecondary}` }}>
               <thead>
-                <tr style={{ background: '#fafafa', borderBottom: '1px solid #e8e8e8' }}>
-                  <th style={{ padding: '8px 12px', textAlign: 'left', width: '32%' }}>字段名 / 标题</th>
-                  <th style={{ padding: '8px 12px', textAlign: 'left', width: '68%', color: '#cf1322' }}>历史属性值</th>
+                <tr style={{ background: token.colorFillAlter, borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', width: '32%', color: token.colorText }}>字段名 / 标题</th>
+                  <th style={{ padding: '8px 12px', textAlign: 'left', width: '68%', color: token.colorError }}>历史属性值</th>
                 </tr>
               </thead>
               <tbody>
                 {Object.entries(beforeObj).map(([key, val]: [string, any]) => {
                   const fieldTitle = parseI18nTitle(fieldsMap[key]?.title || key, key);
                   return (
-                    <tr key={key} style={{ borderBottom: '1px solid #f0f0f0' }}>
-                      <td style={{ padding: '8px 12px' }}>
-                        <div style={{ fontWeight: 600, color: '#1f1f1f' }}>{fieldTitle}</div>
-                        {fieldTitle !== key && <code style={{ fontSize: 11, color: '#8c8c8c' }}>{key}</code>}
+                    <tr key={key} style={{ borderBottom: `1px solid ${token.colorBorderSecondary}` }}>
+                      <td style={{ padding: '8px 12px', borderRight: `1px solid ${token.colorBorderSecondary}` }}>
+                        <div style={{ fontWeight: 600, color: token.colorText }}>{fieldTitle}</div>
+                        {fieldTitle !== key && <code style={{ fontSize: 11, background: token.colorFillAlter, color: token.colorTextSecondary, padding: '1px 4px', borderRadius: token.borderRadiusSM }}>{key}</code>}
                       </td>
-                      <td style={{ padding: '8px 12px', background: '#fff1f0' }}>
+                      <td style={{ padding: '8px 12px', background: token.colorErrorBg, color: token.colorErrorText }}>
                         <ComplexDataViewer value={val} type="old" />
                       </td>
                     </tr>
