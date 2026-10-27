@@ -374,10 +374,26 @@ export const ConfigTab: React.FC = () => {
   };
 
   // 6. 打包下载所有日志
-  const handleDownloadAll = () => {
-    const rawBase = (api as any).baseURL || (api as any).axios?.defaults?.baseURL || '';
-    const downloadUrl = rawBase ? `${rawBase}/loggerPro:downloadArchive` : '/api/loggerPro:downloadArchive';
-    window.open(downloadUrl, '_blank');
+  const handleDownloadAll = async () => {
+    try {
+      const res = await api.request({
+        url: 'loggerPro:download',
+        method: 'post',
+        data: {},
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], { type: 'application/gzip' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `logs_${Date.now()}.tar.gz`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      message.error(`打包下载失败: ${err.message || '请求异常'}`);
+    }
   };
 
   // 数据库表表格列定义

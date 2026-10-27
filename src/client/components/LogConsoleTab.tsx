@@ -324,10 +324,28 @@ export const LogConsoleTab: React.FC = () => {
   };
 
   // 单文件下载
-  const handleDownload = () => {
+  const handleDownload = async () => {
     if (!selectedFile) return;
-    const downloadUrl = `/api/loggerPro:download?files=${encodeURIComponent(selectedFile)}`;
-    window.open(downloadUrl, '_blank');
+    try {
+      const res = await api.request({
+        url: 'loggerPro:download',
+        method: 'post',
+        data: { files: [selectedFile] },
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], { type: 'application/gzip' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const baseName = selectedFile.replace(/[\\/]/g, '_');
+      a.download = `${baseName}.tar.gz`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      message.error(`下载日志文件失败: ${err.message || '请求异常'}`);
+    }
   };
 
   // 日志行语法着色高亮渲染

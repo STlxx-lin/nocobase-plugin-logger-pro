@@ -11,7 +11,6 @@ import { AIAnalyzerService } from './services/ai-analyzer.service';
 import { createAuditLogMiddleware } from './middlewares/audit-log';
 import { setupSlowQueryMonitor } from './middlewares/slow-query';
 import { createLoggerProResource } from './actions/logger-pro';
-import { createCompatLoggerResource } from './actions/compat-logger';
 
 function ensurePluginEnvironment() {
   if (!process.env.NODE_MODULES_PATH) {
@@ -77,20 +76,10 @@ export class PluginLoggerProServer extends Plugin {
       ),
     );
 
-    // 注册兼容原版 logger 的资源
-    this.app.resource(
-      createCompatLoggerResource(this.readerService, this.retentionService),
-    );
-
     // 3. 注册 ACL 权限片段
     this.app.acl.registerSnippet({
       name: `pm.${this.name}.loggerPro`,
       actions: ['loggerPro:*', 'logger_audit_logs:*', 'logger_configs:*', 'logger_alert_rules:*', 'logger_alert_logs:*', 'logger_ai_records:*'],
-    });
-
-    this.app.acl.registerSnippet({
-      name: `pm.${this.name}.logger`,
-      actions: ['logger:*'],
     });
 
     // 4. 挂载操作审计中间件

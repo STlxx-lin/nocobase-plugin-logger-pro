@@ -105,10 +105,16 @@ export function createLoggerProResource(
       download: async (ctx: Context, next: Next) => {
         const params = getParams(ctx);
         const { files = [] } = params;
-        const fileList = Array.isArray(files) ? files : files ? [files] : [];
+        const fileList = Array.isArray(files)
+          ? files
+          : typeof files === 'string' && files.trim()
+            ? files.split(',').map((s) => s.trim()).filter(Boolean)
+            : [];
 
         try {
+          (ctx as any).withoutDataWrapping = true;
           ctx.attachment(`logs_${Date.now()}.tar.gz`);
+          ctx.set('Content-Type', 'application/gzip');
           ctx.body = await retentionService.createArchiveStream(fileList.length > 0 ? fileList : undefined);
         } catch (err: any) {
           ctx.throw(500, `Download logs failed: ${err.message}`);

@@ -59,7 +59,12 @@ export class LogReaderService {
    */
   private resolveSafeLogPath(fileName: string): string {
     const basePath = this.getLogBasePath();
-    const resolved = path.resolve(basePath, typeof fileName === 'string' ? fileName : '');
+    let cleanName = typeof fileName === 'string' ? fileName.trim() : '';
+    try {
+      cleanName = decodeURIComponent(cleanName);
+    } catch {}
+    cleanName = cleanName.replace(/^[\\/]+/, '');
+    const resolved = path.resolve(basePath, cleanName);
     if (resolved === basePath || !resolved.startsWith(basePath + path.sep)) {
       throw new Error(`Log file not found: ${fileName}`);
     }

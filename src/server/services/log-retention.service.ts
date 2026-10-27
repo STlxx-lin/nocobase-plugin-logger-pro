@@ -318,7 +318,15 @@ export class LogRetentionService {
     if (typeof fileName !== 'string' || !fileName.trim()) {
       return null;
     }
-    const resolved = path.resolve(basePath, fileName);
+    let normalizedName = fileName.trim();
+    try {
+      normalizedName = decodeURIComponent(normalizedName);
+    } catch {}
+    normalizedName = normalizedName.replace(/^[\\/]+/, '');
+    if (!normalizedName) {
+      return null;
+    }
+    const resolved = path.resolve(basePath, normalizedName);
     // 词法边界：防止 "x/../../secret" 类嵌入式穿越；带分隔符比较防止兄弟目录前缀绕过
     if (resolved === basePath || !resolved.startsWith(basePath + path.sep)) {
       return null;
@@ -395,6 +403,9 @@ export class LogRetentionService {
 
     tarPack.on('error', (err) => {
       gz.emit('error', err);
+    });
+    gz.on('error', (err) => {
+      passthrough.emit('error', err);
     });
 
     tarPack.pipe(gz).pipe(passthrough);

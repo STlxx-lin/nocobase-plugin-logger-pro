@@ -177,6 +177,7 @@ export class AuditExportService {
     const now = new Date();
     const timeStr = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}${String(now.getMinutes()).padStart(2, '0')}`;
 
+    (ctx as any).withoutDataWrapping = true;
     if (format === 'csv') {
       const csvContent = this.generateCsv(records, selectedFields);
       ctx.set('Content-Type', 'text/csv; charset=utf-8');

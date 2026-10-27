@@ -170,14 +170,39 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
     }
   };
 
+  // 执行带鉴权的打包流式下载
+  const downloadFiles = async (targetFiles?: string[], customName?: string) => {
+    try {
+      const res = await api.request({
+        url: 'loggerPro:download',
+        method: 'post',
+        data: targetFiles && targetFiles.length > 0 ? { files: targetFiles } : {},
+        responseType: 'blob',
+      });
+      const blob = new Blob([res.data], { type: 'application/gzip' });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = customName || `logs_${Date.now()}.tar.gz`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      message.error(`下载日志文件失败: ${err.message || '请求异常'}`);
+    }
+  };
+
   // 批量下载
   const handleBatchDownload = () => {
     if (selectedRowKeys.length === 0) {
       // 下载全部
-      window.open('/api/loggerPro:download', '_blank');
+      downloadFiles(undefined, `logs_all_${Date.now()}.tar.gz`);
     } else {
-      const query = selectedRowKeys.map((k) => `files=${encodeURIComponent(String(k))}`).join('&');
-      window.open(`/api/loggerPro:download?${query}`, '_blank');
+      downloadFiles(
+        selectedRowKeys.map((k) => String(k)),
+        `logs_selected_${Date.now()}.tar.gz`,
+      );
     }
   };
 
@@ -268,7 +293,7 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
               type="link"
               size="small"
               icon={<DownloadOutlined />}
-              onClick={() => window.open(`/api/loggerPro:download?files=${encodeURIComponent(fileName)}`, '_blank')}
+              onClick={() => downloadFiles([fileName], `${fileName.replace(/[\\/]/g, '_')}.tar.gz`)}
             >
               下载
             </Button>
