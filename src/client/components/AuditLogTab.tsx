@@ -7,11 +7,12 @@ import {
   Button,
   Space,
   Tag,
-  Modal,
   Drawer,
+  Descriptions,
   message,
-  Tooltip,
   Spin,
+  Alert,
+  Typography,
   theme,
 } from 'antd';
 import {
@@ -19,16 +20,19 @@ import {
   ReloadOutlined,
   DiffOutlined,
   EyeOutlined,
-  SettingOutlined,
   CheckCircleOutlined,
   CloseCircleOutlined,
   ExportOutlined,
   DeploymentUnitOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 import { useLoggerProAPI } from '../context/LoggerProContext';
 import { DiffModal } from './DiffModal';
 import { AuditLogExportDrawer } from './AuditLogExportDrawer';
 import { TraceDrawer } from './TraceDrawer';
+import { AIEngineBadge } from './MarkdownRenderer';
+
+const { Text } = Typography;
 
 export const AuditLogTab: React.FC = () => {
   const { token } = theme.useToken();
@@ -44,6 +48,12 @@ export const AuditLogTab: React.FC = () => {
   const [collectionName, setCollectionName] = useState<string | undefined>(undefined);
   const [actionName, setActionName] = useState<string | undefined>(undefined);
   const [statusFilter, setStatusFilter] = useState<string | undefined>(undefined);
+  const [nlQuery, setNlQuery] = useState<string>('');
+  const [nlLoading, setNlLoading] = useState<boolean>(false);
+  const [nlTags, setNlTags] = useState<Array<{ key: string; label: string; value: any }>>([]);
+  const [nlExtraFilter, setNlExtraFilter] = useState<Record<string, any>>({});
+  const [nlError, setNlError] = useState<{ message: string; errorCode?: string } | null>(null);
+  const [nlEngineMeta, setNlEngineMeta] = useState<{ engine?: 'llm' | 'heuristic'; llmService?: string; model?: string } | null>(null);
 
   // 导出抽屉
   const [exportDrawerVisible, setExportDrawerVisible] = useState(false);
@@ -74,22 +84,37 @@ export const AuditLogTab: React.FC = () => {
   };
 
   // 2. 加载审计日志列表 (字段瘦身优化：不加载大体积快照字段，彻底避免 MySQL 内存排序溢出)
-  const fetchAuditLogs = async (currentPage = page, currentPageSize = pageSize) => {
+  const fetchAuditLogs = async (
+    currentPage = page,
+    currentPageSize = pageSize,
+    overrideFilter?: Record<string, any>,
+    overrideFields?: {
+      username?: string;
+      collectionName?: string | null;
+      actionName?: string | null;
+      statusFilter?: string | null;
+    },
+  ) => {
     setLoading(true);
     try {
-      const filter: any = {};
-      if (username.trim()) {
-        filter['userUsername'] = { $includes: username.trim() };
+      const effectiveUsername = overrideFields && 'username' in overrideFields ? (overrideFields.username || '') : username;
+      const effectiveCollection = overrideFields && 'collectionName' in overrideFields ? (overrideFields.collectionName || undefined) : collectionName;
+      const effectiveAction = overrideFields && 'actionName' in overrideFields ? (overrideFields.actionName || undefined) : actionName;
+      const effectiveStatus = overrideFields && 'statusFilter' in overrideFields ? (overrideFields.statusFilter || undefined) : statusFilter;
+
+      const filter: any = { ...(overrideFilter ?? nlExtraFilter) };
+      if (effectiveUsername.trim()) {
+        filter['userUsername'] = { $includes: effectiveUsername.trim() };
       }
-      if (collectionName) {
-        filter['collectionName'] = collectionName;
+      if (effectiveCollection) {
+        filter['collectionName'] = effectiveCollection;
       }
-      if (actionName) {
-        filter['actionName'] = actionName;
+      if (effectiveAction) {
+        filter['actionName'] = effectiveAction;
       }
-      if (statusFilter === 'success') {
+      if (effectiveStatus === 'success') {
         filter['statusCode'] = { $lt: 400 };
-      } else if (statusFilter === 'error') {
+      } else if (effectiveStatus === 'error') {
         filter['statusCode'] = { $gte: 400 };
       }
 
@@ -180,7 +205,10 @@ export const AuditLogTab: React.FC = () => {
   }, [page, pageSize, collectionName, actionName, statusFilter]);
 
   const handleSearch = () => {
-    setPage(1);
+    if (page !== 1) {
+      setPage(1);
+      return;
+    }
     fetchAuditLogs(1, pageSize);
   };
 
@@ -189,8 +217,119 @@ export const AuditLogTab: React.FC = () => {
     setCollectionName(undefined);
     setActionName(undefined);
     setStatusFilter(undefined);
+    setNlQuery('');
+    setNlTags([]);
+    setNlExtraFilter({});
+    setNlError(null);
+    setNlEngineMeta(null);
+    // 第 1 页时依赖不变不会自动翻页，需要主动再拉一次
+    if (page !== 1) {
+      setPage(1);
+      return;
+    }
+    fetchAuditLogs(1, pageSize, {});
+  };
+
+  // 自然语言转结构化查询条件 (NL2Filter)
+  const handleNLSearch = async (forceHeuristic = false) => {
+    const q = nlQuery.trim();
+    if (!q) {
+      message.warning('请输入自然语言查询描述');
+      return;
+    }
+    setNlLoading(true);
+    setNlError(null);
+    try {
+      const res = await api.request({
+        url: 'loggerPro:nlToFilter',
+        method: 'post',
+        data: { query: q, forceHeuristic },
+      });
+      const data = res?.data?.data || res?.data;
+      if (data?.success) {
+        const ui = data.uiFields || {};
+        const f = data.filter || {};
+        setUsername(ui.username || '');
+        setCollectionName(ui.collectionName || undefined);
+        setActionName(ui.actionName || undefined);
+        setStatusFilter(ui.statusFilter || undefined);
+
+        const extra: Record<string, any> = {};
+        if (f.createdAt) extra.createdAt = f.createdAt;
+        if (f.method) extra.method = f.method;
+        if (f.path) extra.path = f.path;
+        if (typeof f.statusCode === 'number' || (f.statusCode && !ui.statusFilter)) {
+          extra.statusCode = f.statusCode;
+        }
+        setNlExtraFilter(extra);
+        setNlTags(Array.isArray(data.tags) ? data.tags : []);
+        setNlEngineMeta({
+          engine: data.engine,
+          llmService: data.llmService,
+          model: data.model,
+        });
+        message.success(data.explanation || '已解析查询条件并自动筛选');
+
+        // 构造完整 filter 立即查询
+        const immediateFilter: Record<string, any> = { ...extra };
+        if (ui.username) immediateFilter.userUsername = { $includes: ui.username };
+        if (ui.collectionName) immediateFilter.collectionName = ui.collectionName;
+        if (ui.actionName) immediateFilter.actionName = ui.actionName;
+        if (ui.statusFilter === 'success') immediateFilter.statusCode = { $lt: 400 };
+        else if (ui.statusFilter === 'error') immediateFilter.statusCode = { $gte: 400 };
+
+        setPage(1);
+        fetchAuditLogs(1, pageSize, immediateFilter);
+      } else {
+        setNlError({
+          message: data?.errorMessage || '未能解析自然语言查询条件',
+          errorCode: data?.errorCode,
+        });
+      }
+    } catch (err: any) {
+      setNlError({ message: `智能查询解析失败: ${err.message}` });
+      message.error(`智能查询解析失败: ${err.message}`);
+    } finally {
+      setNlLoading(false);
+    }
+  };
+
+  const handleRemoveNLTag = (tagKey: string) => {
+    setNlTags((prev) => prev.filter((t) => t.key !== tagKey));
+    const nextExtra = { ...nlExtraFilter };
+    const overrideFields: {
+      username?: string;
+      collectionName?: string | null;
+      actionName?: string | null;
+      statusFilter?: string | null;
+    } = {};
+
+    if (tagKey === 'username') {
+      setUsername('');
+      overrideFields.username = '';
+    } else if (tagKey === 'collectionName') {
+      setCollectionName(undefined);
+      overrideFields.collectionName = null;
+    } else if (tagKey === 'actionName') {
+      setActionName(undefined);
+      overrideFields.actionName = null;
+    } else if (tagKey === 'statusFilter') {
+      setStatusFilter(undefined);
+      overrideFields.statusFilter = null;
+    } else if (tagKey === 'statusCode') {
+      setStatusFilter(undefined);
+      overrideFields.statusFilter = null;
+      delete nextExtra.statusCode;
+    } else if (tagKey === 'createdAt') {
+      delete nextExtra.createdAt;
+    } else if (tagKey === 'method') {
+      delete nextExtra.method;
+    } else if (tagKey === 'path') {
+      delete nextExtra.path;
+    }
+    setNlExtraFilter(nextExtra);
     setPage(1);
-    fetchAuditLogs(1, pageSize);
+    fetchAuditLogs(1, pageSize, nextExtra, overrideFields);
   };
 
   const getActionTagColor = (act: string) => {
@@ -208,88 +347,158 @@ export const AuditLogTab: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* 顶部搜索过滤栏 */}
-      <Card size="small" bordered>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
-          <Space wrap>
-            <Input
-              placeholder="操作人用户名"
-              style={{ width: 160 }}
-              value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              onPressEnter={handleSearch}
-              allowClear
-            />
+      {/* 单行紧凑工具条 */}
+      <Card size="small" bordered bodyStyle={{ padding: '10px 12px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between' }}>
+            <Space wrap size={8}>
+              <Space.Compact size="middle">
+                <Input
+                  size="middle"
+                  prefix={<RobotOutlined style={{ color: token.colorPrimary }} />}
+                  placeholder='AI 智能搜索，如 "昨天 admin 删除失败"'
+                  style={{ width: 210 }}
+                  value={nlQuery}
+                  onChange={(e) => setNlQuery(e.target.value)}
+                  onPressEnter={() => handleNLSearch(false)}
+                  allowClear
+                />
+                <Button size="middle" type="primary" loading={nlLoading} onClick={() => handleNLSearch(false)}>
+                  AI 筛选
+                </Button>
+              </Space.Compact>
 
-            <Select
-              placeholder="目标数据表"
-              style={{ width: 180 }}
-              value={collectionName}
-              onChange={(v) => setCollectionName(v)}
-              allowClear
-              showSearch
-              filterOption={(input, option: any) =>
-                (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+              <Input
+                size="middle"
+                placeholder="操作人"
+                style={{ width: 96 }}
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                onPressEnter={handleSearch}
+                allowClear
+                onClear={() => setUsername('')}
+              />
+
+              <Select
+                size="middle"
+                placeholder="目标数据表"
+                style={{ width: 132 }}
+                value={collectionName}
+                onChange={(v) => {
+                  setPage(1);
+                  setCollectionName(v);
+                }}
+                allowClear
+                showSearch
+                filterOption={(input, option: any) =>
+                  (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                }
+                options={collectionsList.map((c) => ({
+                  label: `${c.title} (${c.name})`,
+                  value: c.name,
+                }))}
+              />
+
+              <Select
+                size="middle"
+                placeholder="动作"
+                style={{ width: 92 }}
+                value={actionName}
+                onChange={(v) => {
+                  setPage(1);
+                  setActionName(v);
+                }}
+                allowClear
+                options={[
+                  { label: 'create', value: 'create' },
+                  { label: 'update', value: 'update' },
+                  { label: 'destroy', value: 'destroy' },
+                ]}
+              />
+
+              <Select
+                size="middle"
+                placeholder="状态"
+                style={{ width: 92 }}
+                value={statusFilter}
+                onChange={(v) => {
+                  setPage(1);
+                  setStatusFilter(v);
+                }}
+                allowClear
+                options={[
+                  { label: '成功 (<400)', value: 'success' },
+                  { label: '失败 (>=400)', value: 'error' },
+                ]}
+              />
+
+              <Button size="middle" type="primary" icon={<SearchOutlined />} onClick={handleSearch}>
+                查询
+              </Button>
+              <Button size="middle" onClick={handleReset}>
+                重置
+              </Button>
+            </Space>
+
+            <Space size={6}>
+              <Button
+                size="middle"
+                icon={<ExportOutlined />}
+                onClick={() => setExportDrawerVisible(true)}
+              >
+                导出
+              </Button>
+              <Button size="middle" icon={<ReloadOutlined />} onClick={() => fetchAuditLogs()} loading={loading}>
+                刷新
+              </Button>
+            </Space>
+          </div>
+
+          {nlError && (
+            <Alert
+              type="error"
+              showIcon
+              closable
+              onClose={() => setNlError(null)}
+              message={
+                nlError.errorCode === 'LLM_NOT_CONFIGURED'
+                  ? '未配置可用的真实 LLM 服务'
+                  : 'AI 智能筛选调用失败'
               }
-              options={collectionsList.map((c) => ({
-                label: `${c.title} (${c.name})`,
-                value: c.name,
-              }))}
+              description={nlError.message}
+              action={
+                <Button size="middle" type="primary" onClick={() => handleNLSearch(true)} loading={nlLoading}>
+                  内置规则兜底
+                </Button>
+              }
             />
+          )}
 
-            <Select
-              placeholder="操作动作"
-              style={{ width: 130 }}
-              value={actionName}
-              onChange={(v) => setActionName(v)}
-              allowClear
-              options={[
-                { label: '创建 (create)', value: 'create' },
-                { label: '更新 (update)', value: 'update' },
-                { label: '删除 (destroy)', value: 'destroy' },
-              ]}
-            />
-
-            <Select
-              placeholder="执行状态"
-              style={{ width: 110 }}
-              value={statusFilter}
-              onChange={(v) => setStatusFilter(v)}
-              allowClear
-              options={[
-                { label: '全部状态', value: undefined },
-                { label: '成功 (<400)', value: 'success' },
-                { label: '失败 (>=400)', value: 'error' },
-              ]}
-            />
-
-            <Button type="primary" icon={<SearchOutlined />} onClick={handleSearch}>
-              查询
-            </Button>
-            <Button onClick={handleReset}>重置</Button>
-          </Space>
-
-          <Space>
-            <Button
-              type="primary"
-              ghost
-              icon={<ExportOutlined />}
-              onClick={() => setExportDrawerVisible(true)}
-            >
-              导出审计日志
-            </Button>
-            <Button icon={<ReloadOutlined />} onClick={() => fetchAuditLogs()} loading={loading}>
-              刷新
-            </Button>
-          </Space>
+          {nlTags.length > 0 && (
+            <Space wrap size={4}>
+              {nlEngineMeta && (
+                <AIEngineBadge
+                  engine={nlEngineMeta.engine}
+                  llmService={nlEngineMeta.llmService}
+                  model={nlEngineMeta.model}
+                />
+              )}
+              <span style={{ fontSize: 12, color: token.colorTextSecondary }}>已解析条件:</span>
+              {nlTags.map((t) => (
+                <Tag key={t.key} color="purple" closable onClose={() => handleRemoveNLTag(t.key)}>
+                  {t.label}
+                </Tag>
+              ))}
+            </Space>
+          )}
         </div>
       </Card>
 
-      {/* 审计日志数据表格 */}
+      {/* 审计日志核心字段表 */}
       <Card bordered bodyStyle={{ padding: 0 }}>
         <Table
           rowKey="id"
-          size="middle"
+          size="small"
           loading={loading}
           dataSource={data}
           pagination={{
@@ -298,7 +507,7 @@ export const AuditLogTab: React.FC = () => {
             total,
             showSizeChanger: true,
             pageSizeOptions: ['15', '30', '50', '100'],
-            showTotal: (t) => `共 ${t} 条审计记录`,
+            showTotal: (t) => `共 ${t} 条记录`,
             onChange: (p, ps) => {
               setPage(p);
               setPageSize(ps);
@@ -308,8 +517,12 @@ export const AuditLogTab: React.FC = () => {
             {
               title: '操作时间',
               dataIndex: 'createdAt',
-              width: 170,
-              render: (t) => new Date(t).toLocaleString(),
+              width: 168,
+              render: (t) => (
+                <span style={{ fontSize: 12, color: token.colorTextSecondary }}>
+                  {t ? new Date(t).toLocaleString() : '-'}
+                </span>
+              ),
             },
             {
               title: '操作人',
@@ -317,16 +530,16 @@ export const AuditLogTab: React.FC = () => {
               width: 140,
               render: (u, r) => (
                 <div>
-                  <span style={{ fontWeight: 500 }}>{u || 'Anonymous'}</span>
-                  {r.userNickname && <div style={{ fontSize: 12, color: '#8c8c8c' }}>{r.userNickname}</div>}
+                  <span style={{ fontWeight: 500, color: token.colorText }}>{u || 'Anonymous'}</span>
+                  {r.userNickname && <div style={{ fontSize: 11, color: token.colorTextSecondary }}>{r.userNickname}</div>}
                 </div>
               ),
             },
             {
-              title: '目标模块 / 数据表',
+              title: '目标数据表',
               dataIndex: 'collectionName',
-              width: 160,
-              render: (c) => <code style={{ color: '#0958d9' }}>{c || '-'}</code>,
+              ellipsis: true,
+              render: (c) => <code style={{ color: token.colorPrimary }}>{c || '-'}</code>,
             },
             {
               title: '操作类型',
@@ -335,67 +548,42 @@ export const AuditLogTab: React.FC = () => {
               render: (act) => <Tag color={getActionTagColor(act)}>{act}</Tag>,
             },
             {
-              title: '请求信息',
-              dataIndex: 'path',
-              render: (path, r) => (
-                <div style={{ fontSize: 12 }}>
-                  <Tag>{r.method}</Tag>
-                  <span style={{ color: '#595959' }}>{path}</span>
-                </div>
-              ),
-            },
-            {
-              title: '客户端 IP',
-              dataIndex: 'ip',
-              width: 130,
-              render: (ip) => <span style={{ fontSize: 12 }}>{ip}</span>,
-            },
-            {
               title: '状态 / 耗时',
-              width: 120,
+              width: 130,
               render: (_, r) => {
                 const isOk = r.statusCode < 400;
                 return (
-                  <Space direction="vertical" size={2}>
+                  <Space size={6}>
                     <Tag icon={isOk ? <CheckCircleOutlined /> : <CloseCircleOutlined />} color={isOk ? 'success' : 'error'}>
                       {r.statusCode || 200}
                     </Tag>
-                    <span style={{ fontSize: 11, color: '#8c8c8c' }}>{r.durationMs ?? 0} ms</span>
+                    <span style={{ fontSize: 12, color: token.colorTextSecondary }}>{r.durationMs ?? 0}ms</span>
                   </Space>
                 );
               },
             },
             {
               title: '操作',
-              width: 190,
+              width: 200,
               render: (_, r) => (
-                <Space size={4}>
+                <Space size={2}>
+                  <Button size="middle" type="link" icon={<EyeOutlined />} onClick={() => handleOpenDrawer(r)}>
+                    详情
+                  </Button>
+                  <Button size="middle" type="link" icon={<DiffOutlined />} onClick={() => handleOpenDiff(r)}>
+                    Diff
+                  </Button>
                   <Button
-                    size="small"
+                    size="middle"
                     type="link"
                     icon={<DeploymentUnitOutlined />}
+                    disabled={!r.reqId}
                     onClick={() => {
                       setTraceReqId(r.reqId);
                       setTraceDrawerVisible(true);
                     }}
                   >
                     追踪
-                  </Button>
-                  <Button
-                    size="small"
-                    type="link"
-                    icon={<DiffOutlined />}
-                    onClick={() => handleOpenDiff(r)}
-                  >
-                    Diff
-                  </Button>
-                  <Button
-                    size="small"
-                    type="link"
-                    icon={<EyeOutlined />}
-                    onClick={() => handleOpenDrawer(r)}
-                  >
-                    详情
                   </Button>
                 </Space>
               ),
@@ -404,7 +592,7 @@ export const AuditLogTab: React.FC = () => {
         />
       </Card>
 
-      {/* Diff 对比弹窗 */}
+      {/* Diff 对比抽屉 */}
       <DiffModal
         visible={diffModalVisible}
         onClose={() => {
@@ -415,39 +603,120 @@ export const AuditLogTab: React.FC = () => {
         loading={diffLoading}
       />
 
-      {/* 参数与错误详情抽屉 */}
+      {/* 审计日志完整详情右侧 Drawer */}
       <Drawer
-        title="🔍 审计日志详细报文"
+        title="审计日志详情"
         placement="right"
-        width={560}
+        width={620}
         onClose={() => {
           setDrawerVisible(false);
           setDrawerRecord(null);
         }}
         open={drawerVisible}
+        extra={
+          drawerRecord && (
+            <Space>
+              <Button size="middle" icon={<DiffOutlined />} onClick={() => handleOpenDiff(drawerRecord)}>
+                数据 Diff
+              </Button>
+              {drawerRecord.reqId && (
+                <Button
+                  size="middle"
+                  icon={<DeploymentUnitOutlined />}
+                  onClick={() => {
+                    setTraceReqId(drawerRecord.reqId);
+                    setTraceDrawerVisible(true);
+                  }}
+                >
+                  全链路追踪
+                </Button>
+              )}
+            </Space>
+          )
+        }
       >
         <Spin spinning={drawerLoading}>
           {drawerRecord && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <Descriptions size="small" column={2} bordered>
+                <Descriptions.Item label="操作人">
+                  {drawerRecord.userUsername || 'Anonymous'} {drawerRecord.userNickname ? `(${drawerRecord.userNickname})` : ''}
+                </Descriptions.Item>
+                <Descriptions.Item label="客户端 IP">{drawerRecord.ip || '-'}</Descriptions.Item>
+                <Descriptions.Item label="目标数据表">{drawerRecord.collectionName || '-'}</Descriptions.Item>
+                <Descriptions.Item label="操作类型">
+                  <Tag color={getActionTagColor(drawerRecord.actionName)}>{drawerRecord.actionName}</Tag>
+                </Descriptions.Item>
+                <Descriptions.Item label="请求路径" span={2}>
+                  <Space size={6}>
+                    <Tag>{drawerRecord.method}</Tag>
+                    <code style={{ fontSize: 12, wordBreak: 'break-all' }}>{drawerRecord.path || '-'}</code>
+                  </Space>
+                </Descriptions.Item>
+                <Descriptions.Item label="ReqId" span={2}>
+                  <Text copyable style={{ fontSize: 12, fontFamily: 'monospace' }}>
+                    {drawerRecord.reqId || '-'}
+                  </Text>
+                </Descriptions.Item>
+                <Descriptions.Item label="发生时间">
+                  {drawerRecord.createdAt ? new Date(drawerRecord.createdAt).toLocaleString() : '-'}
+                </Descriptions.Item>
+                <Descriptions.Item label="状态 / 耗时">
+                  HTTP {drawerRecord.statusCode || 200} ({drawerRecord.durationMs ?? 0} ms)
+                </Descriptions.Item>
+              </Descriptions>
+
               {drawerRecord.errorMessage && (
                 <div>
-                  <h4 style={{ color: '#ff4d4f', fontWeight: 600 }}>❌ 异常错误信息</h4>
-                  <pre style={{ background: token.colorErrorBg, border: `1px solid ${token.colorErrorBorder}`, padding: 12, borderRadius: 6, color: token.colorErrorText, whiteSpace: 'pre-wrap' }}>
+                  <div style={{ color: token.colorError, fontWeight: 600, marginBottom: 6 }}>异常错误信息</div>
+                  <pre
+                    style={{
+                      background: token.colorErrorBg,
+                      border: `1px solid ${token.colorErrorBorder}`,
+                      padding: 12,
+                      borderRadius: 6,
+                      color: token.colorErrorText,
+                      whiteSpace: 'pre-wrap',
+                      margin: 0,
+                    }}
+                  >
                     {drawerRecord.errorMessage}
                   </pre>
                 </div>
               )}
 
               <div>
-                <h4 style={{ fontWeight: 600, color: token.colorText }}>📦 请求参数 (Params / Values)</h4>
-                <pre style={{ background: token.colorFillAlter, border: `1px solid ${token.colorBorderSecondary}`, color: token.colorText, padding: 12, borderRadius: 6, maxHeight: 300, overflow: 'auto', fontSize: 12 }}>
+                <div style={{ fontWeight: 600, color: token.colorText, marginBottom: 6 }}>请求参数 (Params / Values)</div>
+                <pre
+                  style={{
+                    background: token.colorFillAlter,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    color: token.colorText,
+                    padding: 12,
+                    borderRadius: 6,
+                    maxHeight: 280,
+                    overflow: 'auto',
+                    fontSize: 12,
+                    margin: 0,
+                  }}
+                >
                   {JSON.stringify(drawerRecord.params, null, 2) || '(空)'}
                 </pre>
               </div>
 
               <div>
-                <h4 style={{ fontWeight: 600, color: token.colorText }}>🌐 客户端 User-Agent</h4>
-                <div style={{ background: token.colorFillAlter, border: `1px solid ${token.colorBorderSecondary}`, padding: 12, borderRadius: 6, fontSize: 12, color: token.colorTextSecondary, wordBreak: 'break-all' }}>
+                <div style={{ fontWeight: 600, color: token.colorText, marginBottom: 6 }}>客户端 User-Agent</div>
+                <div
+                  style={{
+                    background: token.colorFillAlter,
+                    border: `1px solid ${token.colorBorderSecondary}`,
+                    padding: 10,
+                    borderRadius: 6,
+                    fontSize: 12,
+                    color: token.colorTextSecondary,
+                    wordBreak: 'break-all',
+                  }}
+                >
                   {drawerRecord.userAgent || '-'}
                 </div>
               </div>
@@ -455,6 +724,7 @@ export const AuditLogTab: React.FC = () => {
           )}
         </Spin>
       </Drawer>
+
       {/* 审计日志导出抽屉 */}
       <AuditLogExportDrawer
         visible={exportDrawerVisible}

@@ -1,8 +1,28 @@
 import { Context, Next } from '@nocobase/actions';
 import { Application } from '@nocobase/server';
+import crypto from 'crypto';
 import { LogConfigService } from '../services/log-config.service';
 import { AlertService } from '../services/alert.service';
 import { CONFIG_KEYS, ALERT_RULE_TYPES } from '../constants';
+
+/**
+ * 获取当前请求对应的数据源仓库：多数据源场景下 ctx.db 会跟随请求的数据源切换，
+ * 优先跟随请求数据源，避免在子数据表上取到主库仓库导致快照获取失败。
+ */
+function getRequestRepository(app: Application, ctx: Context, collectionName: string) {
+  const sourceId = (ctx.action as any)?.sourceId || (ctx.state as any)?.dataSourceKey;
+  if (sourceId) {
+    try {
+      const repo = (ctx.db as any)?.getRepository?.(collectionName, sourceId);
+      if (repo) return repo;
+    } catch {}
+  }
+  try {
+    const repo = (ctx.db as any)?.getRepository?.(collectionName);
+    if (repo) return repo;
+  } catch {}
+  return app.db.getRepository(collectionName);
+}
 
 export function createAuditLogMiddleware(app: Application, configService: LogConfigService, alertService: AlertService) {
   // 排除系统内部高频操作及插件管理/迁移相关资源，防止 SQLite 锁争用死锁与冗余日志
@@ -133,7 +153,10 @@ export function createAuditLogMiddleware(app: Application, configService: LogCon
     }
 
     const startTime = Date.now();
+    // 配置读取走内存缓存：整条链路一次性取出，避免逐条 get* 造成的重复解析与不一致
     const recordDiff = configService.getBoolean(CONFIG_KEYS.AUDIT_RECORD_DIFF, true);
+    const zeroDiffSkipRaw = configService.get(CONFIG_KEYS.AUDIT_ZERO_DIFF_SKIP, 'true');
+    const zeroDiffSkip = zeroDiffSkipRaw === 'true' || zeroDiffSkipRaw === '1' || (zeroDiffSkipRaw as any) === true;
 
     let beforeData: any = null;
     let recordId: any =
@@ -156,7 +179,7 @@ export function createAuditLogMiddleware(app: Application, configService: LogCon
     // 如果是更新或删除操作，尝试获取修改前快照
     if (recordDiff && collectionName && (isUpdateAction || isDestroyAction)) {
       try {
-        const repo = app.db.getRepository(collectionName);
+        const repo = getRequestRepository(app, ctx, collectionName);
         if (repo) {
           const collection = app.db.getCollection(collectionName);
           const submittedValues = action.params?.values || {};
@@ -223,9 +246,13 @@ export function createAuditLogMiddleware(app: Application, configService: LogCon
         const normalizedResponseBody = normalizeModelData(rawResponseBody);
 
         if (isCreateAction) {
-          afterData = normalizedResponseBody;
+          afterData = Array.isArray(normalizedResponseBody) && normalizedResponseBody.length === 2 && typeof normalizedResponseBody[1] === 'boolean'
+            ? normalizedResponseBody[0]
+            : (Array.isArray(normalizedResponseBody) && normalizedResponseBody.length === 1 ? normalizedResponseBody[0] : normalizedResponseBody);
         } else if (isUpdateAction) {
-          afterData = normalizedResponseBody;
+          afterData = Array.isArray(normalizedResponseBody) && normalizedResponseBody.length === 1
+            ? normalizedResponseBody[0]
+            : normalizedResponseBody;
 
           // 若响应体中未包含完整的记录字段（例如只返回受影响行数），尝试按 ID 重新查询最新快照
           const effectiveRecordId = recordId || afterData?.id;
@@ -235,7 +262,7 @@ export function createAuditLogMiddleware(app: Application, configService: LogCon
             effectiveRecordId
           ) {
             try {
-              const repo = app.db.getRepository(collectionName);
+              const repo = getRequestRepository(app, ctx, collectionName);
               if (repo) {
                 const refreshed = await repo.findOne({ filterByTk: effectiveRecordId });
                 if (refreshed) {
@@ -261,9 +288,11 @@ export function createAuditLogMiddleware(app: Application, configService: LogCon
         }
       }
 
-      // 如果开启了零差异跳过，且为更新操作但无任何业务字段变化，直接跳过保存
-      const zeroDiffSkip = configService.getBoolean(CONFIG_KEYS.AUDIT_ZERO_DIFF_SKIP, true);
-      if (zeroDiffSkip && isUpdateAction) {
+
+      // 如果开启了零差异跳过，且为更新操作但无任何业务字段变化，直接返回跳过保存
+      // 注意：下游中间件在第 229 行已完成执行，严禁在此重复调用 await next()（会触发 next() called multiple times 崩溃）
+      // 同时防范 errorOccurred 场景，避免 finally 块的 return 意外吞没业务异常
+      if (!errorOccurred && zeroDiffSkip && isUpdateAction) {
         if (beforeData && afterData && diffKeys.size === 0) {
           return;
         }
@@ -278,39 +307,68 @@ export function createAuditLogMiddleware(app: Application, configService: LogCon
         '127.0.0.1';
 
       const userAgent = ctx.headers['user-agent'] || '';
-      const reqId =
+      const resolvedReqId =
         (ctx as any).reqId ||
-        ctx.state?.reqId ||
+        (ctx.state as any)?.reqId ||
         ctx.get?.('x-request-id') ||
         ctx.headers?.['x-request-id'] ||
         (ctx.res as any)?.getHeader?.('x-request-id') ||
         '';
+      // 极少数请求可能跳过 request-logger，此时仍补一个本地 reqId，保证审计记录可被全链路追踪检索
+      const reqId = resolvedReqId || `audit-${crypto.randomUUID()}`;
 
-      // 异步存储瘦身后审计日志
-      const auditPayload = {
-        reqId: reqId ? String(reqId) : null,
-        userId: currentUser?.id || null,
-        userUsername: currentUser?.username || currentUser?.email || 'Anonymous',
-        userNickname: currentUser?.nickname || currentUser?.username || '访客',
-        ip,
-        userAgent,
-        method,
-        path: ctx.path,
-        collectionName: collectionName || '',
-        actionName: actionName || method,
-        recordId: recordId ? String(recordId) : null,
-        params: sanitizeParams(action.params),
-        beforeData: beforeData ? extractLeanData(beforeData, diffKeys) : null,
-        afterData: afterData ? extractLeanData(afterData, diffKeys) : null,
-        diff: diffData,
-        statusCode,
-        durationMs,
-        errorMessage: errorOccurred ? errorOccurred.message || String(errorOccurred) : null,
-      };
+      // 异步存储瘦身后审计日志（序列化兜底：审计失败绝不能影响业务请求本身）
+      let auditPayload: Record<string, any>;
+      try {
+        auditPayload = {
+          reqId: String(reqId),
+          userId: currentUser?.id || null,
+          userUsername: currentUser?.username || currentUser?.email || 'Anonymous',
+          userNickname: currentUser?.nickname || currentUser?.username || '访客',
+          ip,
+          userAgent,
+          method,
+          path: ctx.path,
+          collectionName: collectionName || '',
+          actionName: actionName || method,
+          recordId: recordId ? String(recordId) : null,
+          params: sanitizeParams(action.params),
+          beforeData: beforeData ? extractLeanData(beforeData, diffKeys) : null,
+          afterData: afterData ? extractLeanData(afterData, diffKeys) : null,
+          diff: diffData,
+          statusCode,
+          durationMs,
+          errorMessage: errorOccurred ? errorOccurred.message || String(errorOccurred) : null,
+        };
+      } catch (serErr: any) {
+        app.logger?.warn?.(`[LoggerPro] Build audit payload failed: ${serErr?.message || serErr}`);
+        auditPayload = {
+          reqId: String(reqId),
+          userId: currentUser?.id || null,
+          userUsername: currentUser?.username || 'Anonymous',
+          userNickname: currentUser?.nickname || '访客',
+          ip,
+          userAgent,
+          method,
+          path: ctx.path,
+          collectionName: collectionName || '',
+          actionName: actionName || method,
+          recordId: recordId ? String(recordId) : null,
+          params: null,
+          beforeData: null,
+          afterData: null,
+          diff: null,
+          statusCode,
+          durationMs,
+          errorMessage: errorOccurred ? errorOccurred.message || String(errorOccurred) : '[audit payload serialization skipped]',
+        };
+      }
 
-      saveAuditLog(app, auditPayload).catch((e) => {
-        app.logger?.warn?.(`[LoggerPro] Save audit log error: ${e.message}`);
-      });
+      try {
+        await saveAuditLog(app, auditPayload);
+      } catch (e: any) {
+        app.logger?.warn?.(`[LoggerPro] Save audit log error: ${e?.message || e}`);
+      }
 
       // 告警检测
       if (statusCode >= 500 || errorOccurred) {
@@ -331,10 +389,48 @@ export function createAuditLogMiddleware(app: Application, configService: LogCon
 }
 
 async function saveAuditLog(app: Application, payload: any) {
-  const repo = app.db.getRepository('logger_audit_logs');
-  if (repo) {
-    await repo.create({ values: payload });
+  try {
+    const repo = app.db.getRepository('logger_audit_logs');
+    if (repo) {
+      // guarded: false 保留 options 等非 schema 键（此前会被仓库静默剥离，导致部分动作参数丢失）
+      await repo.create({ values: payload, guarded: false } as any);
+    }
+  } catch (err: any) {
+    app.logger?.warn?.(`[LoggerPro] Save audit log error: ${err?.message || err}`);
   }
+}
+
+// 递归防护上限：流/套接字/代理对象常带自引用或返回自身的 toJSON，必须硬性截断，否则会栈溢出
+const MAX_PROBE_DEPTH = 6;
+const MAX_NORMALIZE_DEPTH = 8;
+
+/**
+ * 判断是否为流 / 二进制类对象（文件下载、SSE、压缩包等接口的响应体）。
+ * 这类对象不参与差异对比：既没有可比的字段，遍历还会触发栈溢出甚至阻塞。
+ */
+function isStreamLike(val: any): boolean {
+  if (!val || typeof val !== 'object') return false;
+  // Node.js Stream 实例需同时具备 pipe 与 on 方法（避免命中带 destroy 方法的 Sequelize Model 实体）
+  if (typeof (val as any).pipe === 'function' && typeof (val as any).on === 'function') {
+    return true;
+  }
+  // WHATWG Web Stream (ReadableStream): 具备 getReader 或 pipeTo
+  if (typeof (val as any).getReader === 'function' || typeof (val as any).pipeTo === 'function') {
+    return true;
+  }
+  // 跨 realm 判定（如 stream/web 构造的实例）
+  try {
+    return typeof Buffer !== 'undefined' && Buffer.isBuffer(val) ? true : false;
+  } catch {
+    return false;
+  }
+}
+
+/** 非普通对象（类实例、Error、Buffer、TypedArray 等）一律不递归展开 */
+function isPlainObject(val: any): boolean {
+  if (!val || typeof val !== 'object') return false;
+  const proto = Object.getPrototypeOf(val);
+  return proto === Object.prototype || proto === null;
 }
 
 /**
@@ -342,63 +438,109 @@ async function saveAuditLog(app: Application, payload: any) {
  * 1. 处理 Sequelize Model 实例（.toJSON(), .dataValues, .get({ plain: true }))
  * 2. 解包单元素数组 [Model] -> Model
  * 3. 剥离 Sequelize 内部状态（以 _ 开头的属性、uniqno、isNewRecord 等）
+ * 4. 流 / Buffer / 类实例直接以占位符返回，绝不递归（issue #3：返回文件流的接口会导致 Maximum call stack size exceeded）
  */
-function normalizeModelData(data: any, isRoot = true): any {
+function normalizeModelData(data: any, isRoot = true, depth = 0, seen?: WeakSet<object>): any {
   if (data === null || data === undefined) return null;
 
-  // 1. 处理 Date 实例或日期对象
-  if (data instanceof Date || (typeof data === 'object' && Object.prototype.toString.call(data) === '[object Date]')) {
+  // 0. 深度上限：任何形态的循环引用/自引用到这里都会终止
+  if (depth > MAX_NORMALIZE_DEPTH) return '[Max Depth]';
+
+  // 1. 标量直接返回
+  if (typeof data !== 'object') return typeof data === 'function' ? undefined : data;
+
+  // 2. 二进制与流：不展开
+  if (isStreamLike(data)) return '[Stream]';
+  if (Buffer.isBuffer(data)) return `[Buffer ${data.length} bytes]`;
+  if (ArrayBuffer.isView(data)) return `[Binary ${(data as any).byteLength} bytes]`;
+
+  // 3. 处理 Date 实例或日期对象
+  if (data instanceof Date || Object.prototype.toString.call(data) === '[object Date]') {
     return isNaN(data.getTime()) ? null : data.toISOString();
   }
 
-  // 2. 如果包含 toJSON 方法（如 Sequelize Model / Dayjs / Moment 等）
-  if (typeof data === 'object' && typeof data.toJSON === 'function') {
-    return normalizeModelData(data.toJSON(), isRoot);
+  // 4. 循环引用检测
+  const visited = seen || new WeakSet<object>();
+  if (visited.has(data)) return '[Circular]';
+  visited.add(data);
+
+  // 5. 带 toJSON 的对象（Sequelize Model / Dayjs / Moment / Error 等）
+  if (typeof (data as any).toJSON === 'function') {
+    try {
+      const json = (data as any).toJSON();
+      if (json === data) return '[Stream]'; // toJSON 返回自身：典型的流/代理对象，直接终止
+      return normalizeModelData(json, isRoot, depth + 1, visited);
+    } catch {
+      return '[Unserializable]';
+    }
   }
 
-  // 3. 如果是 Sequelize Model 且包含 dataValues
-  if (typeof data === 'object' && data.dataValues && typeof data.dataValues === 'object') {
-    return normalizeModelData(data.dataValues, isRoot);
+  // 6. Sequelize Model 且包含 dataValues
+  if ((data as any).dataValues && typeof (data as any).dataValues === 'object') {
+    return normalizeModelData((data as any).dataValues, isRoot, depth + 1, visited);
   }
 
-  // 4. 处理包裹层如 { data: ... } 结构
-  if (typeof data === 'object' && !Array.isArray(data) && data.data !== undefined && data.id === undefined) {
-    return normalizeModelData(data.data, isRoot);
+  // 7. 处理包裹层如 { data: ... } 结构
+  if (
+    !Array.isArray(data) &&
+    isPlainObject(data) &&
+    (data as any).data !== undefined &&
+    (data as any).id === undefined
+  ) {
+    return normalizeModelData((data as any).data, isRoot, depth + 1, visited);
   }
 
-  // 5. 处理数组结构：仅在最顶层且包含单条完整模型时解包，深层关联数组/附件数组保留数组形态
+  // 8. 处理数组结构：仅在最顶层且包含单条完整模型时解包（兼容 [model] 与 Sequelize [model, created]），深层关联数组/附件数组保留数组形态
   if (Array.isArray(data)) {
-    if (isRoot && data.length === 1 && typeof data[0] === 'object' && data[0] !== null && ('id' in data[0] || 'dataValues' in data[0])) {
-      return normalizeModelData(data[0], false);
+    if (
+      isRoot &&
+      (data.length === 1 || (data.length === 2 && typeof data[1] === 'boolean')) &&
+      typeof data[0] === 'object' &&
+      data[0] !== null &&
+      ('id' in data[0] || 'dataValues' in data[0] || typeof (data[0] as any).get === 'function')
+    ) {
+      return normalizeModelData(data[0], false, depth + 1, visited);
     }
-    return data.map((item) => normalizeModelData(item, false));
+    return data.map((item) => normalizeModelData(item, false, depth + 1, visited));
   }
 
-  // 6. 纯对象处理：剔除 Sequelize 内部私有属性并递归清洗所有属性值
-  if (typeof data === 'object') {
-    const clean: Record<string, any> = {};
-    for (const [key, val] of Object.entries(data)) {
-      if (
-        key.startsWith('_') ||
-        key === 'uniqno' ||
-        key === 'isNewRecord' ||
-        key === 'isMaster' ||
-        typeof val === 'function'
-      ) {
-        continue;
-      }
-      clean[key] = normalizeModelData(val, false);
+  // 9. 非普通对象（Error / Socket / 类实例等）：只取可枚举自有属性，且受深度限制
+  if (!isPlainObject(data)) {
+    try {
+      const proto = Object.getPrototypeOf(data);
+      const name = proto && proto.constructor ? proto.constructor.name : 'Object';
+      return `[${name}]`;
+    } catch {
+      return '[Object]';
     }
-    return clean;
   }
 
-  return data;
+  // 10. 纯对象处理：剔除 Sequelize 内部私有属性并递归清洗所有属性值
+  const clean: Record<string, any> = {};
+  for (const [key, val] of Object.entries(data)) {
+    if (
+      key.startsWith('_') ||
+      key === 'uniqno' ||
+      key === 'isNewRecord' ||
+      key === 'isMaster' ||
+      typeof val === 'function'
+    ) {
+      continue;
+    }
+    clean[key] = normalizeModelData(val, false, depth + 1, visited);
+  }
+  return clean;
 }
 
 /**
  * 对比前置与后置数据差异
  */
 function computeFieldDiff(before: any, after: any) {
+  // 流响应体没有可比较字段，直接跳过 diff（issue #3）
+  if (isStreamLike(before) || isStreamLike(after)) {
+    return { diffData: null, diffKeys: new Set<string>(), normalizedBefore: null, normalizedAfter: null };
+  }
+
   const normalizedBefore = normalizeModelData(before);
   const normalizedAfter = normalizeModelData(after);
 
@@ -469,7 +611,7 @@ function isSensitiveKey(key: string): boolean {
 /**
  * 智能截断与脱敏（过滤超长文本、富文本、Base64 与密码）
  */
-function sanitizeAndTruncate(val: any, maxStrLen = 300, depth = 0): any {
+function sanitizeAndTruncate(val: any, maxStrLen = 300, depth = 0, seen?: WeakSet<object>): any {
   if (val === null || val === undefined) return val;
   if (typeof val === 'number' || typeof val === 'boolean') return val;
 
@@ -487,22 +629,39 @@ function sanitizeAndTruncate(val: any, maxStrLen = 300, depth = 0): any {
 
   if (depth > 3) return '[Object/Array]';
 
+  // 流与自引用对象不展开（issue #3）
+  if (isStreamLike(val)) return '[Stream]';
+  if (Buffer.isBuffer(val)) return `[Buffer ${val.length} bytes]`;
+
+  const visited = seen || new WeakSet<object>();
+  if (visited.has(val)) return '[Circular]';
+
   if (Array.isArray(val)) {
+    visited.add(val);
     if (val.length > 10) {
-      const sliced = val.slice(0, 10).map((item) => sanitizeAndTruncate(item, maxStrLen, depth + 1));
+      const sliced = val.slice(0, 10).map((item) => sanitizeAndTruncate(item, maxStrLen, depth + 1, visited));
       sliced.push(`... [Total ${val.length} items]`);
       return sliced;
     }
-    return val.map((item) => sanitizeAndTruncate(item, maxStrLen, depth + 1));
+    return val.map((item) => sanitizeAndTruncate(item, maxStrLen, depth + 1, visited));
   }
 
   if (typeof val === 'object') {
+    if (!isPlainObject(val) && typeof (val as any).toJSON !== 'function') {
+      try {
+        const proto = Object.getPrototypeOf(val);
+        return `[${proto && proto.constructor ? proto.constructor.name : 'Object'}]`;
+      } catch {
+        return '[Object]';
+      }
+    }
+    visited.add(val);
     const res: Record<string, any> = {};
     for (const key of Object.keys(val)) {
       if (isSensitiveKey(key)) {
         res[key] = '******';
       } else {
-        res[key] = sanitizeAndTruncate(val[key], maxStrLen, depth + 1);
+        res[key] = sanitizeAndTruncate(val[key], maxStrLen, depth + 1, visited);
       }
     }
     return res;
@@ -514,10 +673,12 @@ function sanitizeAndTruncate(val: any, maxStrLen = 300, depth = 0): any {
 /**
  * 提取精简快照数据：若有变更 key 集合，仅保留产生差异的字段和核心标识，杜绝冗余存储整表字段
  */
-function extractLeanData(data: any, diffKeys?: Set<string>): any {
+function extractLeanData(data: any, diffKeys?: Set<string>, depth = 0): any {
   if (!data || typeof data !== 'object') return data;
+  if (depth > 2) return '[Object/Array]';
+  if (isStreamLike(data)) return '[Stream]';
   if (Array.isArray(data)) {
-    return data.map((item) => extractLeanData(item, diffKeys));
+    return data.slice(0, 20).map((item) => extractLeanData(item, diffKeys, depth + 1));
   }
 
   const res: Record<string, any> = {};

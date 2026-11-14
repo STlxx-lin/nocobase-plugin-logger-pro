@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
-  Modal,
+  Drawer,
   Table,
   Button,
   Space,
@@ -11,8 +11,8 @@ import {
   Statistic,
   Row,
   Col,
-  Alert,
   Tooltip,
+  theme,
 } from 'antd';
 import {
   DeleteOutlined,
@@ -36,6 +36,7 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
   onClose,
   onFilesChanged,
 }) => {
+  const { token } = theme.useToken();
   const api = useLoggerProAPI();
   const [loading, setLoading] = useState(false);
   const [files, setFiles] = useState<any[]>([]);
@@ -251,7 +252,7 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
       dataIndex: 'mtime',
       key: 'mtime',
       width: 180,
-      render: (text: string) => <span style={{ color: '#595959', fontSize: 12 }}>{text ? new Date(text).toLocaleString() : '-'}</span>,
+      render: (text: string) => <span style={{ color: token.colorTextSecondary, fontSize: 12 }}>{text ? new Date(text).toLocaleString() : '-'}</span>,
     },
     {
       title: '操作',
@@ -269,7 +270,7 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
                 okText="确认清空"
                 cancelText="取消"
               >
-                <Button type="link" size="small" icon={<ClearOutlined />} style={{ color: '#fa8c16' }}>
+                <Button type="link" size="middle" icon={<ClearOutlined />} style={{ color: '#fa8c16' }}>
                   清空
                 </Button>
               </Popconfirm>
@@ -283,7 +284,7 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
                 okText="确认删除"
                 cancelText="取消"
               >
-                <Button type="link" size="small" icon={<DeleteOutlined />} danger>
+                <Button type="link" size="middle" icon={<DeleteOutlined />} danger>
                   删除
                 </Button>
               </Popconfirm>
@@ -291,7 +292,7 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
 
             <Button
               type="link"
-              size="small"
+              size="middle"
               icon={<DownloadOutlined />}
               onClick={() => downloadFiles([fileName], `${fileName.replace(/[\\/]/g, '_')}.tar.gz`)}
             >
@@ -304,47 +305,49 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
   ];
 
   return (
-    <Modal
+    <Drawer
       title={
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <FolderOpenOutlined style={{ color: '#1890ff', fontSize: 18 }} />
+          <FolderOpenOutlined style={{ color: token.colorPrimary, fontSize: 17 }} />
           <span>日志文件清理与存储管理</span>
         </div>
       }
+      placement="right"
       open={visible}
-      onCancel={onClose}
-      width={900}
-      footer={[
-        <Button key="close" onClick={onClose}>
-          关闭
-        </Button>,
-      ]}
+      onClose={onClose}
+      width={860}
+      extra={
+        <Button size="middle" icon={<ReloadOutlined />} onClick={fetchFiles} loading={loading}>
+          刷新列表
+        </Button>
+      }
     >
       <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
         {/* 概览统计与快捷清理卡片 */}
         <Row gutter={16}>
           <Col span={8}>
-            <Card size="small" style={{ background: '#fafafa' }}>
+            <Card size="small" style={{ background: token.colorFillAlter }}>
               <Statistic title="日志文件总数" value={files.length} suffix="个" />
             </Card>
           </Col>
           <Col span={8}>
-            <Card size="small" style={{ background: '#fafafa' }}>
-              <Statistic title="当前磁盘占用" value={totalSizeMb} suffix="MB" valueStyle={{ color: '#1890ff' }} />
+            <Card size="small" style={{ background: token.colorFillAlter }}>
+              <Statistic title="当前磁盘占用" value={totalSizeMb} suffix="MB" valueStyle={{ color: token.colorPrimary }} />
             </Card>
           </Col>
           <Col span={8}>
-            <Card size="small" style={{ background: '#fafafa', display: 'flex', alignItems: 'center', height: '100%' }}>
+            <Card size="small" style={{ background: token.colorFillAlter, display: 'flex', alignItems: 'center', height: '100%' }}>
               <Tooltip title="按照日志配置中设定的保留天数和磁盘配额，立即清除所有过期和超额的历史日志">
                 <Button
+                  size="middle"
                   type="primary"
                   danger
                   icon={<ThunderboltOutlined />}
                   loading={cleaning}
                   onClick={handleCleanPolicyNow}
-                  style={{ width: '100%', height: 36 }}
+                  style={{ width: '100%' }}
                 >
-                  ⚡ 一键策略清理
+                  一键策略清理
                 </Button>
               </Tooltip>
             </Card>
@@ -352,8 +355,8 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
         </Row>
 
         {/* 批量操作工具栏 */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Space>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <Space wrap size={6}>
             <Popconfirm
               title={`确定批量删除选中的 ${selectedRowKeys.length} 个文件？`}
               disabled={selectedRowKeys.length === 0}
@@ -361,7 +364,7 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
               okText="确认删除"
               cancelText="取消"
             >
-              <Button danger icon={<DeleteOutlined />} disabled={selectedRowKeys.length === 0} loading={loading}>
+              <Button size="middle" danger icon={<DeleteOutlined />} disabled={selectedRowKeys.length === 0} loading={loading}>
                 批量删除 ({selectedRowKeys.length})
               </Button>
             </Popconfirm>
@@ -373,19 +376,15 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
               okText="确认清空"
               cancelText="取消"
             >
-              <Button icon={<ClearOutlined />} disabled={selectedRowKeys.length === 0} loading={loading}>
+              <Button size="middle" icon={<ClearOutlined />} disabled={selectedRowKeys.length === 0} loading={loading}>
                 批量清空 ({selectedRowKeys.length})
               </Button>
             </Popconfirm>
 
-            <Button icon={<DownloadOutlined />} onClick={handleBatchDownload}>
+            <Button size="middle" icon={<DownloadOutlined />} onClick={handleBatchDownload}>
               {selectedRowKeys.length > 0 ? `打包下载选中 (${selectedRowKeys.length})` : '打包下载全部日志'}
             </Button>
           </Space>
-
-          <Button icon={<ReloadOutlined />} onClick={fetchFiles} loading={loading}>
-            刷新列表
-          </Button>
         </div>
 
         {/* 文件表格 */}
@@ -399,10 +398,10 @@ export const LogFileManagerModal: React.FC<LogFileManagerModalProps> = ({
           columns={columns}
           dataSource={files}
           loading={loading}
-          pagination={{ pageSize: 8, showTotal: (t) => `共 ${t} 个日志文件` }}
+          pagination={{ pageSize: 10, showTotal: (t) => `共 ${t} 个日志文件` }}
         />
       </div>
-    </Modal>
+    </Drawer>
   );
 };
 

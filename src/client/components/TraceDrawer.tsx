@@ -46,6 +46,8 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
 
   const fetchTrace = async (id: string) => {
     setLoading(true);
+    // 立即收起上一份结果，避免快速切换 reqId 时残留旧链路数据
+    setTraceData(null);
     try {
       const res = await api.request({
         url: 'loggerPro:getTrace',
@@ -131,7 +133,7 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
             <span>全链路请求生命周期追踪 (Trace Timeline)</span>
           </Space>
           {reqId && (
-            <Button size="small" icon={<CopyOutlined />} onClick={copyReqId}>
+            <Button size="middle" icon={<CopyOutlined />} onClick={copyReqId}>
               复制 ReqId
             </Button>
           )}
@@ -161,13 +163,14 @@ export const TraceDrawer: React.FC<TraceDrawerProps> = ({ visible, reqId, onClos
                   )}
                   {summary.durationMs !== undefined && (
                     <Tag color={summary.durationMs > 1000 ? 'red' : summary.durationMs > 500 ? 'orange' : 'cyan'}>
-                      ⏱️ {summary.durationMs} ms
+                      <ClockCircleOutlined style={{ marginRight: 4 }} />
+                      {summary.durationMs} ms
                     </Tag>
                   )}
                 </Space>
 
                 <Button
-                  size="small"
+                  size="middle"
                   type="primary"
                   style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }}
                   icon={<RobotOutlined />}

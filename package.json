@@ -6,9 +6,13 @@
   "description.zh-CN": "企业级系统日志控制台、动态日志配置、用户操作审计日志、数据变更Diff对比及多渠道异常告警管理。",
   "homepage": "https://github.com/STlxx-lin/nocobase-plugin-logger-pro",
   "homepage.zh-CN": "https://github.com/STlxx-lin/nocobase-plugin-logger-pro",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "main": "server.js",
   "client": "client.js",
+  "client-v2": "client-v2.js",
+  "scripts": {
+    "test": "vitest run"
+  },
   "files": [
     "dist",
     "server.js",
@@ -18,7 +22,9 @@
     "client-v2.js",
     "client-v2.d.ts",
     "package.json",
-    "README.md"
+    "README.md",
+    "README_EN.md",
+    "LICENSE"
   ],
   "nocobase": {
     "supportedVersions": [
@@ -26,20 +32,27 @@
     ]
   },
   "peerDependencies": {
-    "@nocobase/actions": "2.2.10",
-    "@nocobase/client": "2.2.10",
-    "@nocobase/client-v2": "2.2.10",
-    "@nocobase/database": "2.2.10",
-    "@nocobase/logger": "2.2.10",
-    "@nocobase/server": "2.2.10",
-    "@nocobase/test": "2.2.10",
-    "@nocobase/utils": "2.2.10"
+    "@ant-design/icons": "^5.0.0",
+    "@nocobase/actions": "^2.2.0",
+    "@nocobase/client": "^2.2.0",
+    "@nocobase/client-v2": "^2.2.0",
+    "@nocobase/database": "^2.2.0",
+    "@nocobase/logger": "^2.2.0",
+    "@nocobase/server": "^2.2.0",
+    "@nocobase/utils": "^2.2.0",
+    "antd": "^5.0.0",
+    "koa": "^2.0.0 || ^3.0.0",
+    "lodash": "^4.0.0",
+    "react": "^18.0.0"
   },
   "dependencies": {
+    "cron": "^3.1.7",
     "tar-fs": "^3.0.4"
   },
   "devDependencies": {
-    "@types/tar-fs": "^2.0.2"
+    "@nocobase/test": "2.2.10",
+    "@types/tar-fs": "^2.0.2",
+    "vitest": "^1.6.1"
   },
   "keywords": [
     "Logging",

@@ -36,16 +36,85 @@ export interface TraceResult {
   rawLogs: Array<{ file: string; line: string; time?: string; level?: string }>;
 }
 
+export class SimpleLRUCache<K, V extends { expireAt?: number } = any> {
+  private cache = new Map<K, V>();
+  private readonly maxCapacity: number;
+
+  constructor(maxCapacity = 500) {
+    this.maxCapacity = maxCapacity;
+  }
+
+  get(key: K): V | undefined {
+    const entry = this.cache.get(key);
+    if (!entry) return undefined;
+
+    if (entry.expireAt !== undefined && entry.expireAt <= Date.now()) {
+      this.cache.delete(key);
+      return undefined;
+    }
+
+    // 访问刷新热度：删除后再插入以将其移动至 Map 尾部
+    this.cache.delete(key);
+    this.cache.set(key, entry);
+    return entry;
+  }
+
+  set(key: K, value: V): void {
+    if (this.cache.has(key)) {
+      this.cache.delete(key);
+    }
+    this.cache.set(key, value);
+
+    while (this.cache.size > this.maxCapacity) {
+      const oldestKey = this.cache.keys().next().value;
+      if (oldestKey !== undefined) {
+        this.cache.delete(oldestKey);
+      } else {
+        break;
+      }
+    }
+  }
+
+  has(key: K): boolean {
+    return this.get(key) !== undefined;
+  }
+
+  delete(key: K): boolean {
+    return this.cache.delete(key);
+  }
+
+  clear(): void {
+    this.cache.clear();
+  }
+
+  get size(): number {
+    return this.cache.size;
+  }
+
+  keys(): IterableIterator<K> {
+    return this.cache.keys();
+  }
+}
+
 export class TraceService {
   private app: Application;
   private readerService: LogReaderService;
 
-  // 短时内存缓存：缓存 30 秒，避免用户重复点选时的重复全量磁盘 I/O
-  private traceCache = new Map<string, { data: TraceResult; expireAt: number }>();
+  // 短时内存 LRU 缓存：上限 500 条，缓存 30 秒，避免用户重复点选时的重复全量磁盘 I/O
+  private traceCache: SimpleLRUCache<string, { data: TraceResult; expireAt: number }>;
 
-  constructor(app: Application, readerService: LogReaderService) {
+  constructor(app: Application, readerService: LogReaderService, maxCacheSize = 500) {
     this.app = app;
     this.readerService = readerService;
+    this.traceCache = new SimpleLRUCache<string, { data: TraceResult; expireAt: number }>(maxCacheSize);
+  }
+
+  public getCacheSize(): number {
+    return this.traceCache.size;
+  }
+
+  public clearCache(): void {
+    this.traceCache.clear();
   }
 
   // 清除 ANSI 控制码
@@ -324,19 +393,43 @@ export class TraceService {
         );
       });
 
-      // 如果有审计时间，优先挑选修改时间在审计时间附近的日志文件（最多取前 4 个最新文件）
-      const targetFiles = relevantFiles.slice(0, 4);
+      // 按修改时间倒序；有审计时间时优先取文件名中包含当天日期的日志（跨天后仍能命中）
+      const sorted = relevantFiles.slice().sort((a, b) => b.mtime.getTime() - a.mtime.getTime());
+      let targetFiles = sorted.slice(0, 4);
 
-      // 并发进行流式按需检索
-      const fileTasks = targetFiles.map((fileInfo) => {
-        const absPath = path.join(basePath, fileInfo.relativePath);
-        if (!fs.existsSync(absPath)) return Promise.resolve([]);
-        return this.searchReqIdInFile(absPath, fileInfo.name, cleanReqId, 100);
-      });
+      if (auditRecord?.createdAt) {
+        const targetDay = new Date(auditRecord.createdAt);
+        if (!isNaN(targetDay.getTime())) {
+          const dayStr = `${targetDay.getFullYear()}-${String(targetDay.getMonth() + 1).padStart(2, '0')}-${String(targetDay.getDate()).padStart(2, '0')}`;
+          const sameDay = sorted.filter((f) => (f.relativePath || f.name).includes(dayStr) || f.name.includes(dayStr));
+          if (sameDay.length > 0) {
+            targetFiles = sameDay.slice(0, 4);
+          }
+        }
+      }
 
-      const results = await Promise.all(fileTasks);
-      for (const logs of results) {
-        rawLogs.push(...logs);
+      const runSearch = async (files: typeof sorted) => {
+        const fileTasks = files.map((fileInfo) => {
+          const absPath = path.join(basePath, fileInfo.relativePath);
+          if (!fs.existsSync(absPath)) return Promise.resolve([] as any[]);
+          return this.searchReqIdInFile(absPath, fileInfo.name, cleanReqId, 100);
+        });
+        const results = await Promise.all(fileTasks);
+        const collected: typeof rawLogs = [];
+        for (const logs of results) {
+          collected.push(...logs);
+        }
+        return collected;
+      };
+
+      rawLogs.push(...(await runSearch(targetFiles)));
+
+      // 首轮无命中（跨天/已轮转归档）时，再向更早的相关文件回退检索一次
+      if (rawLogs.length === 0 && sorted.length > targetFiles.length) {
+        const fallback = sorted.filter((f) => !targetFiles.includes(f)).slice(0, 8);
+        if (fallback.length > 0) {
+          rawLogs.push(...(await runSearch(fallback)));
+        }
       }
     } catch {}
 
@@ -423,18 +516,20 @@ export class TraceService {
     }
 
     // 事件 C: 审计数据表变更记录 (Audit Diff)
-    if (auditRecord && auditRecord.diffSummary) {
+    const auditDiff = auditRecord?.diff;
+    if (auditRecord && auditDiff) {
+      const diffKeys: string[] = typeof auditDiff === 'string' ? [auditDiff] : Object.keys(auditDiff);
       const midTime = new Date(auditRecord.createdAt).getTime() + Math.floor((auditRecord.durationMs || 10) / 2);
       timeline.push({
         type: 'audit',
         title: `数据表变更快照: ${auditRecord.collectionName} (${auditRecord.actionName})`,
         time: new Date(midTime).toLocaleString(),
         timestamp: midTime,
-        detail: `记录ID: ${auditRecord.recordId || '-'} | 变更摘要: ${typeof auditRecord.diffSummary === 'string' ? auditRecord.diffSummary : Object.keys(auditRecord.diffSummary).join(', ')}`,
+        detail: `记录ID: ${auditRecord.recordId || '-'} | 变更字段: ${diffKeys.length > 0 ? diffKeys.join(', ') : '无'}`,
         extra: {
-          previousData: auditRecord.previousData,
-          newData: auditRecord.newData,
-          diffSummary: auditRecord.diffSummary,
+          beforeData: auditRecord.beforeData,
+          afterData: auditRecord.afterData,
+          diff: auditDiff,
         },
       });
     }
@@ -465,17 +560,11 @@ export class TraceService {
       rawLogs,
     };
 
-    // 存入短时缓存（30 秒过期）
+    // 存入短时 LRU 缓存（上限 500 条，30 秒过期，自动淘汰最久未访问条目）
     this.traceCache.set(cleanReqId, {
       data: result,
       expireAt: Date.now() + 30 * 1000,
     });
-
-    // 限制缓存大小，防止内存泄漏
-    if (this.traceCache.size > 200) {
-      const firstKey = this.traceCache.keys().next().value;
-      if (firstKey) this.traceCache.delete(firstKey);
-    }
 
     return result;
   }

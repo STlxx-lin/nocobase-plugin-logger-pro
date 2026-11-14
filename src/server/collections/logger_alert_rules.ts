@@ -42,6 +42,17 @@ export default defineCollection({
       comment: '是否启用',
     },
     {
+      name: 'aiSummaryEnabled',
+      type: 'boolean',
+      defaultValue: false,
+      comment: '是否在告警触发时附带 AI 根因摘要',
+    },
+    {
+      name: 'aiSummaryConfig',
+      type: 'json',
+      comment: 'AI 根因摘要模型配置 (llmService, model)',
+    },
+    {
       name: 'lastTriggeredAt',
       type: 'date',
       comment: '最近一次触发时间',

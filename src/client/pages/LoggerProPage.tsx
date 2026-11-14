@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Card, Tabs, theme } from 'antd';
 import {
   DashboardOutlined,
@@ -23,28 +23,40 @@ export interface LoggerProPageProps {
 export const LoggerProPage: React.FC<LoggerProPageProps> = ({ api }) => {
   const { token } = theme.useToken();
   const [activeTab, setActiveTab] = useState('dashboard');
+  // 首次进入某 Tab 才挂载，之后保持挂载：避免一次进入页面就并发 6 个重接口
+  const [mountedTabs, setMountedTabs] = useState<Set<string>>(() => new Set(['dashboard']));
+
+  useEffect(() => {
+    setMountedTabs((prev) => {
+      if (prev.has(activeTab)) return prev;
+      const next = new Set(prev);
+      next.add(activeTab);
+      return next;
+    });
+  }, [activeTab]);
+
+  const lazyTab = (key: string, node: React.ReactNode) =>
+    mountedTabs.has(key) ? node : <div style={{ minHeight: 120 }} />;
 
   return (
     <LoggerProContext.Provider value={{ api }}>
-      <div style={{ padding: '20px 24px', background: token.colorBgLayout, minHeight: '100%' }}>
+      <div style={{ padding: '16px 24px', background: token.colorBgLayout, minHeight: '100%' }}>
         <Card
           bordered={false}
           style={{
-            boxShadow: '0 1px 4px rgba(0,21,41,.08)',
-            borderRadius: 8,
+            boxShadow: token.boxShadowTertiary,
+            borderRadius: token.borderRadiusLG,
+            background: token.colorBgContainer,
           }}
-          bodyStyle={{ padding: '16px 24px 24px' }}
+          bodyStyle={{ padding: '12px 24px 20px' }}
         >
-        <div style={{ marginBottom: 16 }}>
-          <h2 style={{ margin: '0 0 4px 0', fontSize: 20, fontWeight: 600, color: token.colorText }}>
-            📜 日志与审计管理 Pro (Logger Pro)
-          </h2>
-          <p style={{ margin: 0, color: '#8c8c8c', fontSize: 13 }}>
-            企业级系统运行日志控制台、动态日志配置、用户操作审计跟踪、数据变更 Diff 对比及多渠道异常告警体系。
-          </p>
-        </div>
+          <div style={{ marginBottom: 8 }}>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 600, color: token.colorText }}>
+              日志与审计管理 Pro
+            </h2>
+          </div>
 
-        <Tabs
+          <Tabs
           activeKey={activeTab}
           onChange={setActiveTab}
           type="line"
@@ -57,7 +69,7 @@ export const LoggerProPage: React.FC<LoggerProPageProps> = ({ api }) => {
                   <DashboardOutlined /> 运维概览
                 </span>
               ),
-              children: <DashboardTab />,
+              children: lazyTab('dashboard', <DashboardTab />),
             },
             {
               key: 'console',
@@ -66,7 +78,7 @@ export const LoggerProPage: React.FC<LoggerProPageProps> = ({ api }) => {
                   <CodeOutlined /> 日志控制台
                 </span>
               ),
-              children: <LogConsoleTab />,
+              children: lazyTab('console', <LogConsoleTab />),
             },
             {
               key: 'audit',
@@ -75,7 +87,7 @@ export const LoggerProPage: React.FC<LoggerProPageProps> = ({ api }) => {
                   <AuditOutlined /> 操作审计
                 </span>
               ),
-              children: <AuditLogTab />,
+              children: lazyTab('audit', <AuditLogTab />),
             },
             {
               key: 'trace',
@@ -84,7 +96,7 @@ export const LoggerProPage: React.FC<LoggerProPageProps> = ({ api }) => {
                   <DeploymentUnitOutlined /> 全链路追踪
                 </span>
               ),
-              children: <TraceTab />,
+              children: lazyTab('trace', <TraceTab />),
             },
             {
               key: 'config',
@@ -93,7 +105,7 @@ export const LoggerProPage: React.FC<LoggerProPageProps> = ({ api }) => {
                   <SettingOutlined /> 日志配置
                 </span>
               ),
-              children: <ConfigTab />,
+              children: lazyTab('config', <ConfigTab />),
             },
             {
               key: 'alert',
@@ -102,7 +114,7 @@ export const LoggerProPage: React.FC<LoggerProPageProps> = ({ api }) => {
                   <BellOutlined /> 异常告警
                 </span>
               ),
-              children: <AlertTab />,
+              children: lazyTab('alert', <AlertTab />),
             },
           ]}
         />

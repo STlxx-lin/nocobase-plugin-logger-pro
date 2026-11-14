@@ -22,8 +22,20 @@ const envVars = [
 
 export function createCompatLoggerResource(
   readerService: LogReaderService,
-  retentionService: LogRetentionService,
+  retentionService?: LogRetentionService,
 ) {
+  const getRetentionService = (): LogRetentionService | null => {
+    if (retentionService) return retentionService;
+    const app = (readerService as any).app;
+    if (app) {
+      const plugin = app.pm?.get?.('logger-pro') || app.pm?.get?.('@nocobase/plugin-logger-pro');
+      if (plugin?.retentionService) {
+        return plugin.retentionService;
+      }
+    }
+    return null;
+  };
+
   return {
     name: 'logger',
     actions: {
@@ -55,30 +67,42 @@ export function createCompatLoggerResource(
       },
 
       download: async (ctx: Context, next: Next) => {
-        const { files = [] } = ctx.action.params.values || ctx.query || {};
+        const rawValues = ctx.action?.params?.values || (ctx.request as any)?.body || ctx.query || {};
+        const values = rawValues.values && typeof rawValues.values === 'object' && !Array.isArray(rawValues.values) ? rawValues.values : rawValues;
+        const files: string[] = values.files || (Array.isArray(values) ? values : []);
         if (!files.length) {
           ctx.throw(400, 'No files selected.');
         }
+        const retention = getRetentionService();
+        if (!retention) {
+          ctx.throw(500, 'LogRetentionService is not available.');
+        }
         try {
           ctx.attachment('logs.tar.gz');
-          ctx.body = await retentionService.createArchiveStream(files);
-        } catch (err) {
+          ctx.body = await retention.createArchiveStream(files);
+        } catch (err: any) {
           ctx.throw(500, `Download logs failed: ${err.message}`);
         }
         await next();
       },
 
       collect: async (ctx: Context, next: Next) => {
-        const { error, ...info } = ctx.action.params.values || {};
+        const rawValues = ctx.action?.params?.values || (ctx.request as any)?.body || {};
+        const values = rawValues.values && typeof rawValues.values === 'object' ? rawValues.values : rawValues;
+        const { error, ...info } = values;
         const { message, ...e } = error || {};
         ctx.log?.error?.({ message: `Diagnosis, frontend error, ${message}`, ...e });
         ctx.log?.error?.(`Diagnostic information`, info);
         ctx.log?.error?.('Diagnosis, environment variables', _.pick(process.env, envVars));
 
+        const retention = getRetentionService();
+        if (!retention) {
+          ctx.throw(500, 'LogRetentionService is not available.');
+        }
         try {
           ctx.attachment('logs.tar.gz');
-          ctx.body = await retentionService.createArchiveStream();
-        } catch (err) {
+          ctx.body = await retention.createArchiveStream();
+        } catch (err: any) {
           ctx.throw(500, `Download logs failed: ${err.message}`);
         }
         await next();

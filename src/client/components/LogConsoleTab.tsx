@@ -3,14 +3,15 @@ import {
   Card,
   Select,
   Input,
-  Radio,
   Button,
   Space,
   Tag,
   Switch,
   message,
-  Popconfirm,
+  Modal,
   Tooltip,
+  Dropdown,
+  theme,
 } from 'antd';
 import {
   PlayCircleOutlined,
@@ -22,44 +23,59 @@ import {
   VerticalAlignBottomOutlined,
   DeleteOutlined,
   FolderOpenOutlined,
-  CalendarOutlined,
   RobotOutlined,
   ThunderboltOutlined,
+  ExportOutlined,
+  FileTextOutlined,
+  FileDoneOutlined,
+  MoreOutlined,
 } from '@ant-design/icons';
 import { useLoggerProAPI } from '../context/LoggerProContext';
 import { LogFileManagerModal } from './LogFileManagerModal';
 import { AILogAnalysisDrawer } from './AILogAnalysisDrawer';
 
-const getLogCategoryMeta = (filePath: string) => {
-  const name = filePath.toLowerCase();
-  if (name.includes('system_error')) {
-    return { text: '系统异常', color: 'red' };
+// 统一标准分类配置，对齐后端 LogReaderService.detectCategory
+export const LOG_CATEGORY_CONFIG: Record<
+  string,
+  { label: string; color: string; icon: string; order: number }
+> = {
+  System: { label: '系统运行', color: 'blue', icon: '⚙️', order: 1 },
+  Request: { label: 'API请求', color: 'green', icon: '🌐', order: 2 },
+  SQL: { label: 'SQL查询', color: 'purple', icon: '🗄️', order: 3 },
+  Workflow: { label: '工作流', color: 'orange', icon: '⚡', order: 4 },
+  Notification: { label: '通知管理', color: 'magenta', icon: '🔔', order: 5 },
+  Error: { label: '系统异常', color: 'red', icon: '🚨', order: 6 },
+  Export: { label: '数据导出', color: 'gold', icon: '📦', order: 7 },
+  Sync: { label: '用户同步', color: 'cyan', icon: '🔄', order: 8 },
+  Custom: { label: '插件/业务', color: 'default', icon: '🧩', order: 9 },
+};
+
+// 容错获取分类标识符
+export const getFileCategory = (file: any): string => {
+  if (file && typeof file === 'object' && file.category && LOG_CATEGORY_CONFIG[file.category]) {
+    return file.category;
   }
-  if (name.startsWith('system') || name.includes('/system.')) {
-    return { text: '系统运行', color: 'blue' };
-  }
-  if (name.includes('request')) {
-    return { text: 'API请求', color: 'green' };
-  }
-  if (name.includes('sql')) {
-    return { text: 'SQL查询', color: 'purple' };
-  }
-  if (name.includes('workflow')) {
-    return { text: '工作流', color: 'orange' };
-  }
-  if (name.includes('user-data-sync')) {
-    return { text: '用户同步', color: 'cyan' };
-  }
-  if (name.includes('notification')) {
-    return { text: '通知管理', color: 'magenta' };
-  }
-  if (name.includes('custom-request')) {
-    return { text: '自定义请求', color: 'geekblue' };
-  }
-  if (name.includes('export')) {
-    return { text: '数据导出', color: 'gold' };
-  }
-  return { text: '插件/业务', color: 'default' };
+  const filePath = (typeof file === 'string' ? file : file?.relativePath || file?.name || '').toLowerCase();
+  if (filePath.includes('system_error')) return 'Error';
+  if (filePath.startsWith('system') || filePath.includes('/system.')) return 'System';
+  if (filePath.includes('workflow')) return 'Workflow';
+  if (filePath.includes('notification')) return 'Notification';
+  if (filePath.includes('sql')) return 'SQL';
+  if (filePath.includes('custom-request') || filePath.includes('request') || filePath.includes('api/')) return 'Request';
+  if (filePath.includes('export')) return 'Export';
+  if (filePath.includes('user-data-sync') || filePath.includes('sync')) return 'Sync';
+  return 'Custom';
+};
+
+export const getLogCategoryMeta = (file: any) => {
+  const cat = getFileCategory(file);
+  const cfg = LOG_CATEGORY_CONFIG[cat] || { label: '插件/业务', color: 'default', icon: '🧩', order: 9 };
+  return {
+    key: cat,
+    text: cfg.label,
+    color: cfg.color,
+    icon: cfg.icon,
+  };
 };
 
 // 提取文件所属日期 (YYYY-MM-DD)
@@ -75,6 +91,7 @@ const extractFileDate = (file: any): string => {
 };
 
 export const LogConsoleTab: React.FC = () => {
+  const { token } = theme.useToken();
   const api = useLoggerProAPI();
   const [files, setFiles] = useState<any[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
@@ -128,11 +145,67 @@ export const LogConsoleTab: React.FC = () => {
     return list;
   }, [files]);
 
-  // 根据选中的日期筛选日志文件
+  // 日志通道分类选择器状态 (Feature 16)
+  const [selectedCategory, setSelectedCategory] = useState<string>('ALL');
+
+  // 统计各分类通道下的文件数
+  const categoryOptions = useMemo(() => {
+    const counts: Record<string, number> = { ALL: files.length };
+    for (const f of files) {
+      const cat = getFileCategory(f);
+      counts[cat] = (counts[cat] || 0) + 1;
+    }
+
+    const list = [
+      {
+        value: 'ALL',
+        label: '全部通道',
+        count: files.length,
+      },
+      ...Object.entries(LOG_CATEGORY_CONFIG)
+        .sort((a, b) => a[1].order - b[1].order)
+        .map(([key, cfg]) => ({
+          value: key,
+          label: cfg.label,
+          count: counts[key] || 0,
+        })),
+    ];
+    return list;
+  }, [files]);
+
+  // 根据选中的日期与分类双重联动筛选日志文件
   const filteredFiles = useMemo(() => {
-    if (!selectedDate) return files;
-    return files.filter((f) => extractFileDate(f) === selectedDate);
-  }, [files, selectedDate]);
+    return files.filter((f) => {
+      const matchDate = !selectedDate || extractFileDate(f) === selectedDate;
+      const fileCat = getFileCategory(f);
+      const matchCat = selectedCategory === 'ALL' || fileCat === selectedCategory;
+      return matchDate && matchCat;
+    });
+  }, [files, selectedDate, selectedCategory]);
+
+  // 分类切换联动校正
+  const handleCategoryChange = (cat: string) => {
+    setSelectedCategory(cat);
+    setIsTailing(false);
+
+    const nextFiles = files.filter((f) => {
+      const matchDate = !selectedDate || extractFileDate(f) === selectedDate;
+      const fileCat = getFileCategory(f);
+      const matchCat = cat === 'ALL' || fileCat === cat;
+      return matchDate && matchCat;
+    });
+
+    const isCurrentFileValid = nextFiles.some((f) => (f.relativePath || f.name) === selectedFile);
+    if (!isCurrentFileValid) {
+      if (nextFiles.length > 0) {
+        const defaultF = nextFiles.find((f: any) => (f.relativePath || f.name).startsWith('system.') || (f.relativePath || f.name).includes('/system.')) || nextFiles[0];
+        setSelectedFile(defaultF.relativePath || defaultF.name);
+      } else {
+        setSelectedFile('');
+        setLines([]);
+      }
+    }
+  };
 
   // 过滤条件
   const [level, setLevel] = useState<string>('ALL');
@@ -142,8 +215,44 @@ export const LogConsoleTab: React.FC = () => {
   // AI 错误诊断
   const [aiDrawerVisible, setAiDrawerVisible] = useState<boolean>(false);
   const [aiLogText, setAiLogText] = useState<string>('');
+  const [aiContext, setAiContext] = useState<any>(undefined);
 
-  const handleOpenAIDiagnosis = (specificText?: string) => {
+  // 智能错误聚类视图开关
+  const [clusterMode, setClusterMode] = useState<boolean>(false);
+  const [clusters, setClusters] = useState<any[]>([]);
+  const [clusterLoading, setClusterLoading] = useState<boolean>(false);
+
+  const fetchClusters = async (file = selectedFile) => {
+    setClusterLoading(true);
+    try {
+      const res = await api.request({
+        url: 'loggerPro:clusterErrorLogs',
+        method: 'post',
+        data: {
+          fileName: file || undefined,
+          lines: 1000,
+          logLines: !file && lines.length > 0 ? lines : undefined,
+        },
+      });
+      const data = res?.data?.data || res?.data;
+      setClusters(Array.isArray(data?.clusters) ? data.clusters : []);
+    } catch (err: any) {
+      message.error(`错误聚类失败: ${err.message}`);
+    } finally {
+      setClusterLoading(false);
+    }
+  };
+
+  const handleToggleClusterMode = (checked: boolean) => {
+    setClusterMode(checked);
+    if (checked) {
+      setIsTailing(false);
+      fetchClusters(selectedFile);
+    }
+  };
+
+  const handleOpenAIDiagnosis = (specificText?: string, extraCtx?: any) => {
+    setAiContext(extraCtx);
     if (typeof specificText === 'string' && specificText.trim()) {
       setAiLogText(specificText.trim());
       setAiDrawerVisible(true);
@@ -164,10 +273,29 @@ export const LogConsoleTab: React.FC = () => {
 
   // 实时 Tail 相关
   const [isTailing, setIsTailing] = useState<boolean>(false);
-  const [tailOffset, setTailOffset] = useState<number>(0);
   const tailTimerRef = useRef<any>(null);
   const consoleBodyRef = useRef<HTMLDivElement>(null);
   const [autoScroll, setAutoScroll] = useState<boolean>(true);
+
+  // 供轮询定时器读取的最新值（定时器只在开关变化时创建，内部必须走 ref 取最新游标/文件）
+  const selectedFileRef = useRef<string>('');
+  const tailOffsetRef = useRef<number>(0);
+  const autoScrollRef = useRef<boolean>(true);
+  const lineCountRef = useRef<number>(500);
+  useEffect(() => {
+    selectedFileRef.current = selectedFile;
+  }, [selectedFile]);
+  useEffect(() => {
+    autoScrollRef.current = autoScroll;
+  }, [autoScroll]);
+  useEffect(() => {
+    lineCountRef.current = lineCount;
+  }, [lineCount]);
+
+  // 切换文件时重置游标，避免把上一个文件的 offset 用于新文件
+  const resetTailOffset = (offset: number) => {
+    tailOffsetRef.current = offset;
+  };
 
   // 1. 获取日志文件列表
   const fetchFiles = async () => {
@@ -212,7 +340,7 @@ export const LogConsoleTab: React.FC = () => {
       const newLines = data.lines || [];
       setLines(newLines);
       setTotalMatched(data.totalMatched || newLines.length);
-      setTailOffset(data.totalSize || 0);
+      resetTailOffset(data.totalSize || 0);
 
       if (autoScroll && consoleBodyRef.current) {
         setTimeout(() => {
@@ -228,15 +356,17 @@ export const LogConsoleTab: React.FC = () => {
     }
   };
 
-  // 3. 增量 Tail 拉取
+  // 3. 增量 Tail 拉取（通过 ref 读取最新游标，避免定时器闭包读到过期 offset 造成重复拉取）
+  const fetchingTailRef = useRef<boolean>(false);
   const fetchTail = async () => {
-    if (!selectedFile) return;
+    if (!selectedFile || fetchingTailRef.current) return;
+    fetchingTailRef.current = true;
     try {
       const res = await api.request({
         url: 'loggerPro:tail',
         params: {
-          fileName: selectedFile,
-          offsetBytes: tailOffset,
+          fileName: selectedFileRef.current,
+          offsetBytes: tailOffsetRef.current,
         },
       });
       const data = res?.data?.data || res?.data || {};
@@ -245,16 +375,21 @@ export const LogConsoleTab: React.FC = () => {
       if (newLines.length > 0) {
         setLines((prev) => {
           const combined = [...prev, ...newLines];
-          return combined.slice(-lineCount * 2); // 保持窗口
+          return combined.slice(-Math.max(lineCountRef.current, 100) * 2); // 保持窗口
         });
-        setTailOffset(data.newOffset || tailOffset);
+      }
+      // 无论是否有新增行都推进游标（文件被轮转/清空时后端会重置游标）
+      if (typeof data.newOffset === 'number') {
+        resetTailOffset(data.newOffset);
+      }
 
-        if (autoScroll && consoleBodyRef.current) {
-          consoleBodyRef.current.scrollTop = consoleBodyRef.current.scrollHeight;
-        }
+      if (newLines.length > 0 && autoScrollRef.current && consoleBodyRef.current) {
+        consoleBodyRef.current.scrollTop = consoleBodyRef.current.scrollHeight;
       }
     } catch (err: any) {
       // tail 错误不弹打扰提示，静默记录
+    } finally {
+      fetchingTailRef.current = false;
     }
   };
 
@@ -265,27 +400,27 @@ export const LogConsoleTab: React.FC = () => {
   useEffect(() => {
     if (selectedFile) {
       fetchLogContent(selectedFile);
+      if (clusterMode) {
+        fetchClusters(selectedFile);
+      }
     }
   }, [selectedFile, level, lineCount]);
 
-  // 管理 Tail 轮询定时器
+  // 管理 Tail 轮询定时器：仅依赖开关，切换文件/滚动时不断开重连
   useEffect(() => {
-    if (isTailing) {
-      tailTimerRef.current = setInterval(() => {
-        fetchTail();
-      }, 1500);
-    } else {
+    if (!isTailing) {
+      return;
+    }
+    tailTimerRef.current = setInterval(() => {
+      fetchTail();
+    }, 1500);
+    return () => {
       if (tailTimerRef.current) {
         clearInterval(tailTimerRef.current);
         tailTimerRef.current = null;
       }
-    }
-    return () => {
-      if (tailTimerRef.current) {
-        clearInterval(tailTimerRef.current);
-      }
     };
-  }, [isTailing, selectedFile, tailOffset, autoScroll]);
+  }, [isTailing]);
 
   // 清空当前文件
   const handleClearFile = async () => {
@@ -298,7 +433,7 @@ export const LogConsoleTab: React.FC = () => {
       });
       message.success(`日志文件 ${selectedFile} 已清空`);
       setLines([]);
-      setTailOffset(0);
+      resetTailOffset(0);
       fetchFiles();
     } catch (err: any) {
       message.error(`清空失败: ${err.message}`);
@@ -346,6 +481,77 @@ export const LogConsoleTab: React.FC = () => {
     } catch (err: any) {
       message.error(`下载日志文件失败: ${err.message || '请求异常'}`);
     }
+  };
+
+  // 纯客户端导出当前视图 (Feature 17)
+  const handleExportCurrentView = (format: 'txt' | 'json') => {
+    if (!lines || lines.length === 0) {
+      message.warning('当前视图无日志内容可导出');
+      return;
+    }
+
+    const now = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    const timestamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+
+    const catMeta = getLogCategoryMeta(selectedFile);
+    const cleanFileName = (selectedFile || 'console').replace(/[/\\?%*:|"<>]/g, '_');
+    const downloadFileName = `console-view-${catMeta.text}-${cleanFileName}-${timestamp}.${format}`;
+
+    // 清洗 ANSI 控制字符
+    const cleanAnsiLines = lines.map((l) =>
+      l ? l.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]|\[[0-9]{1,2}m/g, '') : ''
+    );
+
+    let blob: Blob;
+
+    if (format === 'json') {
+      const jsonData = {
+        exportedAt: now.toISOString(),
+        source: {
+          file: selectedFile || null,
+          category: catMeta.text,
+          categoryKey: catMeta.key,
+          level: level !== 'ALL' ? level : 'ALL',
+          keyword: keyword.trim() || null,
+          totalExportedLines: lines.length,
+          totalMatchedInFile: totalMatched,
+        },
+        lines: cleanAnsiLines,
+      };
+      blob = new Blob([JSON.stringify(jsonData, null, 2)], {
+        type: 'application/json;charset=utf-8',
+      });
+    } else {
+      const header = [
+        '# ==============================================================================#',
+        '# NocoBase Logger Pro - Console View Export',
+        `# Exported At: ${now.toLocaleString()}`,
+        `# Source File: ${selectedFile || 'None'}`,
+        `# Category:    ${catMeta.text} (${catMeta.key})`,
+        `# Level:       ${level}`,
+        `# Keyword:     ${keyword.trim() || 'None'}`,
+        `# Total Lines: ${lines.length} (Matched in file: ${totalMatched})`,
+        '# ==============================================================================#',
+        '',
+      ].join('\r\n');
+
+      const textContent = header + cleanAnsiLines.join('\r\n');
+      blob = new Blob([textContent], {
+        type: 'text/plain;charset=utf-8',
+      });
+    }
+
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = downloadFileName;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+
+    message.success(`已成功导出当前视图 (${lines.length} 行) 为 ${format.toUpperCase()} 文件`);
   };
 
   // 日志行语法着色高亮渲染
@@ -405,238 +611,366 @@ export const LogConsoleTab: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* 顶部控制工具栏 */}
-      <Card size="small" bordered>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'space-between', alignItems: 'center' }}>
-          {/* 左侧：日期顺序选择、文件选择与级别 */}
-          <Space wrap size="middle">
-            {/* 1. 时间顺序选择器：支持输入筛选、有日志日期可选、无日志日期灰色禁用 */}
-            <Space>
-              <span style={{ fontWeight: 500 }}>日志日期:</span>
-              <Select
-                showSearch
-                placeholder="输入搜索日期"
-                filterOption={(input, option) => {
-                  const val = String(option?.value || '').toLowerCase();
-                  const label = String(option?.selectedLabel || '').toLowerCase();
-                  const q = input.toLowerCase().trim();
-                  return val.includes(q) || label.includes(q);
-                }}
-                style={{ minWidth: 220 }}
-                popupMatchSelectWidth={false}
-                dropdownStyle={{ minWidth: 290 }}
-                optionLabelProp="selectedLabel"
-                value={selectedDate || ''}
-                onChange={(val) => {
-                  const dStr = val || null;
-                  setSelectedDate(dStr);
-                  setIsTailing(false);
-                  if (dStr) {
-                    const matched = files.filter((f) => extractFileDate(f) === dStr);
-                    if (matched.length > 0) {
-                      const defaultF = matched.find((f: any) => f.name.startsWith('system.')) || matched[0];
-                      setSelectedFile(defaultF.relativePath || defaultF.name);
-                    }
-                  } else if (files.length > 0) {
-                    const defaultF = files.find((f: any) => f.name.startsWith('system.')) || files[0];
-                    setSelectedFile(defaultF.relativePath || defaultF.name);
-                  }
-                }}
-                options={[
-                  {
-                    label: (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '2px 0' }}>
-                        <span style={{ fontWeight: 600 }}>📅 全部日期</span>
-                        <Tag style={{ margin: 0, fontSize: 11 }}>{files.length} 个文件</Tag>
-                      </div>
-                    ),
-                    selectedLabel: '📅 全部日期',
-                    value: '',
-                  },
-                  ...dateOptions.map((item) => ({
-                    label: (
-                      <div
-                        style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          gap: 12,
-                          padding: '2px 0',
-                          opacity: item.hasLogs ? 1 : 0.45,
-                        }}
-                      >
-                        <span style={{ fontWeight: item.hasLogs ? 600 : 'normal' }}>
-                          📅 {item.label}
-                        </span>
-                        {item.hasLogs ? (
-                          <Tag color="blue" style={{ fontSize: 11, margin: 0, padding: '0 4px' }}>
-                            {item.count} 个文件
-                          </Tag>
-                        ) : (
-                          <span style={{ color: '#8c8c8c', fontSize: 12 }}>无日志</span>
-                        )}
-                      </div>
-                    ),
-                    selectedLabel: `📅 ${item.label}`,
-                    value: item.dateStr,
-                    disabled: !item.hasLogs, // 没有对应时间的日志文件则灰色无法点击！
-                  })),
-                ]}
-              />
-            </Space>
+      {/* 单行紧凑工具条 */}
+      <Card size="small" bordered bodyStyle={{ padding: '10px 12px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'space-between', alignItems: 'center' }}>
+          <Space wrap size={8}>
+            <Select
+              size="middle"
+              showSearch
+              placeholder="日期"
+              filterOption={(input, option) => {
+                const val = String(option?.value || '').toLowerCase();
+                const label = String(option?.selectedLabel || '').toLowerCase();
+                const q = input.toLowerCase().trim();
+                return val.includes(q) || label.includes(q);
+              }}
+              style={{ width: 136 }}
+              popupMatchSelectWidth={false}
+              dropdownStyle={{ minWidth: 260 }}
+              optionLabelProp="selectedLabel"
+              value={selectedDate || ''}
+              onChange={(val) => {
+                const dStr = val || null;
+                setSelectedDate(dStr);
+                setIsTailing(false);
+                const nextFiles = files.filter((f) => {
+                  const matchDate = !dStr || extractFileDate(f) === dStr;
+                  const fileCat = getFileCategory(f);
+                  const matchCat = selectedCategory === 'ALL' || fileCat === selectedCategory;
+                  return matchDate && matchCat;
+                });
+                if (nextFiles.length > 0) {
+                  const defaultF =
+                    nextFiles.find(
+                      (f: any) => (f.relativePath || f.name).startsWith('system.') || (f.relativePath || f.name).includes('/system.'),
+                    ) || nextFiles[0];
+                  setSelectedFile(defaultF.relativePath || defaultF.name);
+                } else {
+                  setSelectedFile('');
+                  setLines([]);
+                }
+              }}
+              options={[
+                {
+                  label: (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ fontWeight: 600 }}>全部日期</span>
+                      <Tag style={{ margin: 0, fontSize: 11 }}>{files.length}</Tag>
+                    </div>
+                  ),
+                  selectedLabel: '全部日期',
+                  value: '',
+                },
+                ...dateOptions.map((item) => ({
+                  label: (
+                    <div
+                      style={{
+                        display: 'flex',
+                        justifyContent: 'space-between',
+                        alignItems: 'center',
+                        gap: 12,
+                        opacity: item.hasLogs ? 1 : 0.45,
+                      }}
+                    >
+                      <span style={{ fontWeight: item.hasLogs ? 600 : 'normal' }}>{item.label}</span>
+                      {item.hasLogs ? (
+                        <Tag color="blue" style={{ fontSize: 11, margin: 0, padding: '0 4px' }}>
+                          {item.count}
+                        </Tag>
+                      ) : (
+                        <span style={{ color: token.colorTextTertiary, fontSize: 12 }}>无日志</span>
+                      )}
+                    </div>
+                  ),
+                  selectedLabel: item.label,
+                  value: item.dateStr,
+                  disabled: !item.hasLogs,
+                })),
+              ]}
+            />
 
-            {/* 2. 日志文件下拉框 (支持输入筛选 & 联动当前选中的日期) */}
-            <Space>
-              <span style={{ fontWeight: 500 }}>日志文件:</span>
-              <Select
-                showSearch
-                placeholder="输入搜索日志文件"
-                filterOption={(input, option) => {
-                  const val = String(option?.value || '').toLowerCase();
-                  const q = input.toLowerCase().trim();
-                  return val.includes(q);
-                }}
-                style={{ minWidth: 340 }}
-                popupMatchSelectWidth={false}
-                dropdownStyle={{ minWidth: 480 }}
-                optionLabelProp="selectedLabel"
-                value={selectedFile}
-                onChange={(val) => {
-                  setSelectedFile(val);
-                  setIsTailing(false);
-                }}
-                options={filteredFiles.map((f) => {
-                  const filePath = f.relativePath || f.name;
-                  const cat = getLogCategoryMeta(filePath);
-                  return {
-                    label: (
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, padding: '2px 0' }}>
-                        <Space style={{ flex: 1, overflow: 'hidden' }}>
-                          <Tag color={cat.color} style={{ fontSize: 11, padding: '0 6px', margin: 0, fontWeight: 500 }}>
-                            {cat.text}
-                          </Tag>
-                          <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                            {filePath}
-                          </span>
-                        </Space>
-                        <span style={{ color: '#8c8c8c', fontSize: 12, fontFamily: 'monospace', flexShrink: 0 }}>
-                          {f.sizeFormatted}
-                        </span>
-                      </div>
-                    ),
-                    selectedLabel: (
-                      <Space size="small">
-                        <Tag color={cat.color} style={{ fontSize: 11, padding: '0 4px', margin: 0 }}>
+            <Select
+              size="middle"
+              value={selectedCategory}
+              onChange={handleCategoryChange}
+              style={{ width: 120 }}
+              popupMatchSelectWidth={false}
+              options={categoryOptions.map((item) => ({
+                value: item.value,
+                label: (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
+                    <span>{item.label}</span>
+                    <Tag style={{ margin: 0, fontSize: 11 }}>{item.count}</Tag>
+                  </div>
+                ),
+              }))}
+            />
+
+            <Select
+              size="middle"
+              showSearch
+              placeholder="选择日志文件"
+              filterOption={(input, option) => {
+                const val = String(option?.value || '').toLowerCase();
+                const q = input.toLowerCase().trim();
+                return val.includes(q);
+              }}
+              style={{ width: 220 }}
+              popupMatchSelectWidth={false}
+              dropdownStyle={{ minWidth: 440 }}
+              optionLabelProp="selectedLabel"
+              value={selectedFile}
+              onChange={(val) => {
+                setSelectedFile(val);
+                setIsTailing(false);
+              }}
+              options={filteredFiles.map((f) => {
+                const filePath = f.relativePath || f.name;
+                const cat = getLogCategoryMeta(filePath);
+                return {
+                  label: (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}>
+                      <Space style={{ flex: 1, overflow: 'hidden' }}>
+                        <Tag color={cat.color} style={{ fontSize: 11, padding: '0 6px', margin: 0 }}>
                           {cat.text}
                         </Tag>
-                        <span>{filePath}</span>
+                        <span style={{ fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis' }}>{filePath}</span>
                       </Space>
-                    ),
-                    value: filePath,
-                  };
-                })}
-              />
-            </Space>
+                      <span style={{ color: token.colorTextSecondary, fontSize: 12, fontFamily: 'monospace', flexShrink: 0 }}>
+                        {f.sizeFormatted}
+                      </span>
+                    </div>
+                  ),
+                  selectedLabel: filePath,
+                  value: filePath,
+                };
+              })}
+            />
 
-            <Radio.Group value={level} onChange={(e) => setLevel(e.target.value)} buttonStyle="solid" size="small">
-              <Radio.Button value="ALL">ALL</Radio.Button>
-              <Radio.Button value="ERROR"><span style={{ color: '#ff4d4f' }}>ERROR</span></Radio.Button>
-              <Radio.Button value="WARN"><span style={{ color: '#faad14' }}>WARN</span></Radio.Button>
-              <Radio.Button value="INFO">INFO</Radio.Button>
-              <Radio.Button value="DEBUG">DEBUG</Radio.Button>
-            </Radio.Group>
-          </Space>
+            <Select
+              size="middle"
+              value={level}
+              onChange={(v) => setLevel(v)}
+              style={{ width: 92 }}
+              options={[
+                { label: 'ALL', value: 'ALL' },
+                { label: 'ERROR', value: 'ERROR' },
+                { label: 'WARN', value: 'WARN' },
+                { label: 'INFO', value: 'INFO' },
+                { label: 'DEBUG', value: 'DEBUG' },
+              ]}
+            />
 
-          {/* 右侧：关键词检索与操作 */}
-          <Space wrap>
             <Input
-              placeholder="搜索关键词 (Enter检索)"
-              prefix={<SearchOutlined style={{ color: '#bfbfbf' }} />}
-              style={{ width: 220 }}
+              size="middle"
+              placeholder="关键词 (Enter)"
+              prefix={<SearchOutlined style={{ color: token.colorTextPlaceholder }} />}
+              style={{ width: 150 }}
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               onPressEnter={() => fetchLogContent()}
               allowClear
             />
+          </Space>
 
-            <Select
-              size="small"
-              value={lineCount}
-              onChange={(v) => setLineCount(v)}
-              options={[
-                { label: '最新 100 行', value: 100 },
-                { label: '最新 500 行', value: 500 },
-                { label: '最新 1000 行', value: 1000 },
-                { label: '最新 2000 行', value: 2000 },
-              ]}
-            />
-
-            <Tooltip title={isTailing ? '暂停实时 Tail 轮询' : '开启实时 Tail (类似 tail -f)'}>
+          <Space wrap size={6}>
+            <Tooltip title={isTailing ? '暂停实时 Tail 轮询' : '开启实时 Tail'}>
               <Button
+                size="middle"
                 type={isTailing ? 'primary' : 'default'}
                 danger={isTailing}
                 icon={isTailing ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
                 onClick={() => setIsTailing(!isTailing)}
               >
-                {isTailing ? '暂停 Tail' : '实时 Tail'}
+                {isTailing ? '暂停' : 'Tail'}
               </Button>
             </Tooltip>
 
-            <Button icon={<ReloadOutlined />} onClick={() => fetchLogContent()} loading={loading}>
+            <Button size="middle" icon={<ReloadOutlined />} onClick={() => fetchLogContent()} loading={loading}>
               刷新
             </Button>
 
-            <Button icon={<DownloadOutlined />} onClick={handleDownload}>
-              下载文件
+            <Button
+              size="middle"
+              type={clusterMode ? 'primary' : 'default'}
+              icon={<ThunderboltOutlined />}
+              onClick={() => handleToggleClusterMode(!clusterMode)}
+            >
+              {clusterMode ? '终端视图' : '错误聚类'}
             </Button>
 
             <Button
+              size="middle"
               type="primary"
               style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }}
               icon={<RobotOutlined />}
               onClick={() => handleOpenAIDiagnosis()}
             >
-              AI 错误诊断
+              AI 诊断
             </Button>
 
-            <Button
-              type="primary"
-              icon={<FolderOpenOutlined />}
-              onClick={() => setFileManagerVisible(true)}
-            >
-              日志清理与管理
+            <Button size="middle" icon={<FolderOpenOutlined />} onClick={() => setFileManagerVisible(true)}>
+              文件管理
             </Button>
 
-            <Popconfirm
-              title={`确定清空当前日志文件？`}
-              description="清空后历史日志内容将归零，不可恢复。"
-              disabled={!selectedFile}
-              onConfirm={handleClearFile}
-              okText="确认清空"
-              cancelText="取消"
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: 'lines',
+                    label: `显示行数 (当前 ${lineCount} 行)`,
+                    children: [100, 500, 1000, 2000].map((cnt) => ({
+                      key: `line-${cnt}`,
+                      label: `最新 ${cnt} 行${lineCount === cnt ? ' ✓' : ''}`,
+                      onClick: () => setLineCount(cnt),
+                    })),
+                  },
+                  { type: 'divider' },
+                  {
+                    key: 'export-txt',
+                    icon: <FileTextOutlined />,
+                    label: '导出当前视图 (.txt)',
+                    disabled: lines.length === 0,
+                    onClick: () => handleExportCurrentView('txt'),
+                  },
+                  {
+                    key: 'export-json',
+                    icon: <FileDoneOutlined />,
+                    label: '导出当前视图 (.json)',
+                    disabled: lines.length === 0,
+                    onClick: () => handleExportCurrentView('json'),
+                  },
+                  {
+                    key: 'download',
+                    icon: <DownloadOutlined />,
+                    label: '下载当前文件 (.tar.gz)',
+                    disabled: !selectedFile,
+                    onClick: handleDownload,
+                  },
+                  { type: 'divider' },
+                  {
+                    key: 'clear',
+                    icon: <ClearOutlined />,
+                    label: '清空当前文件',
+                    disabled: !selectedFile,
+                    onClick: () => {
+                      Modal.confirm({
+                        title: '确定清空当前日志文件？',
+                        content: '清空后历史日志内容将归零，不可恢复。',
+                        okText: '确认清空',
+                        cancelText: '取消',
+                        onOk: handleClearFile,
+                      });
+                    },
+                  },
+                  {
+                    key: 'delete',
+                    icon: <DeleteOutlined />,
+                    danger: true,
+                    label: '删除当前文件',
+                    disabled: !selectedFile,
+                    onClick: () => {
+                      Modal.confirm({
+                        title: `确定删除当前日志文件 (${selectedFile})？`,
+                        content: '删除后该文件将彻底从磁盘移除。',
+                        okText: '确认删除',
+                        okButtonProps: { danger: true },
+                        cancelText: '取消',
+                        onOk: handleDeleteFile,
+                      });
+                    },
+                  },
+                ],
+              }}
             >
-              <Button icon={<ClearOutlined />} disabled={!selectedFile}>
-                清空文件
+              <Button size="middle" icon={<MoreOutlined />}>
+                更多
               </Button>
-            </Popconfirm>
-
-            <Popconfirm
-              title={`确定删除当前日志文件 (${selectedFile})？`}
-              description="删除后该文件将彻底从磁盘移除。"
-              disabled={!selectedFile}
-              onConfirm={handleDeleteFile}
-              okText="确认删除"
-              cancelText="取消"
-            >
-              <Button icon={<DeleteOutlined />} danger disabled={!selectedFile}>
-                删除文件
-              </Button>
-            </Popconfirm>
+            </Dropdown>
           </Space>
         </div>
       </Card>
 
-      {/* 终端控制台主体 */}
+      {/* 终端控制台主体 / 智能错误聚类视图 */}
+      {clusterMode ? (
+        <Card
+          size="small"
+          bordered
+          title={
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Space>
+                <ThunderboltOutlined style={{ color: '#722ed1' }} />
+                <span>智能错误日志聚类去重 (共 {clusters.length} 个独立异常簇)</span>
+              </Space>
+              <Button size="middle" icon={<ReloadOutlined />} loading={clusterLoading} onClick={() => fetchClusters(selectedFile)}>
+                重新聚类
+              </Button>
+            </div>
+          }
+        >
+          {clusters.length === 0 ? (
+            <div style={{ padding: 48, textAlign: 'center', color: token.colorTextSecondary }}>
+              {clusterLoading ? '正在扫描并计算错误指纹聚类...' : '当前日志文件最近 1000 行未发现 ERROR/WARN 异常簇'}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, maxHeight: '64vh', overflowY: 'auto' }}>
+              {clusters.map((cluster: any) => (
+                <Card
+                  key={cluster.fingerprint}
+                  size="small"
+                  style={{ borderLeft: `4px solid ${cluster.level === 'WARN' ? token.colorWarning : token.colorError}` }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 12, flexWrap: 'wrap' }}>
+                    <div style={{ flex: 1, minWidth: 260 }}>
+                      <Space wrap style={{ marginBottom: 6 }}>
+                        <Tag color={cluster.level === 'WARN' ? 'warning' : 'error'}>{cluster.level}</Tag>
+                        <Tag color="purple">出现 {cluster.count} 次</Tag>
+                        <Tag style={{ fontFamily: 'monospace' }}>指纹: {cluster.fingerprint}</Tag>
+                        {cluster.lastSeen && (
+                          <span style={{ fontSize: 12, color: token.colorTextSecondary }}>最近: {cluster.lastSeen}</span>
+                        )}
+                      </Space>
+                      <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 6, color: token.colorText }}>
+                        {cluster.pattern}
+                      </div>
+                      <pre
+                        style={{
+                          backgroundColor: '#141414',
+                          color: '#ff7875',
+                          padding: 8,
+                          borderRadius: 4,
+                          fontSize: 11,
+                          maxHeight: 96,
+                          overflowY: 'auto',
+                          margin: 0,
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-all',
+                        }}
+                      >
+                        {cluster.sample}
+                      </pre>
+                    </div>
+                    <Button
+                      type="primary"
+                      size="middle"
+                      style={{ backgroundColor: '#722ed1', borderColor: '#722ed1' }}
+                      icon={<RobotOutlined />}
+                      onClick={() =>
+                        handleOpenAIDiagnosis(cluster.rawSample || cluster.sample, {
+                          actionName: `Cluster(${cluster.fingerprint}, count=${cluster.count})`,
+                        })
+                      }
+                    >
+                      AI 诊断此簇
+                    </Button>
+                  </div>
+                </Card>
+              ))}
+            </div>
+          )}
+        </Card>
+      ) : (
       <div
         style={{
           background: '#141414',
@@ -667,7 +1001,7 @@ export const LogConsoleTab: React.FC = () => {
             <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: '#ffbd2e' }} />
             <span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: '50%', background: '#27c93f' }} />
             <span style={{ marginLeft: 8, color: '#e6e6e6', fontWeight: 600 }}>
-              💻 Console: {selectedFile || '无选中日志'}
+              Console: {selectedFile || '无选中日志'}
             </span>
             {selectedFile && (
               <Tag color={getLogCategoryMeta(selectedFile).color} style={{ marginLeft: 4 }}>
@@ -676,7 +1010,7 @@ export const LogConsoleTab: React.FC = () => {
             )}
             {isTailing && (
               <Tag color="success" style={{ marginLeft: 4 }}>
-                ● LIVE STREAMING
+                LIVE STREAMING
               </Tag>
             )}
           </div>
@@ -688,7 +1022,7 @@ export const LogConsoleTab: React.FC = () => {
               <Switch size="small" checked={autoScroll} onChange={setAutoScroll} />
             </Space>
             <Button
-              size="small"
+              size="middle"
               type="text"
               icon={<VerticalAlignBottomOutlined style={{ color: '#8c8c8c' }} />}
               onClick={() => {
@@ -722,6 +1056,7 @@ export const LogConsoleTab: React.FC = () => {
           )}
         </div>
       </div>
+      )}
 
       {/* 日志文件清理与管理模态框 */}
       <LogFileManagerModal
@@ -739,6 +1074,7 @@ export const LogConsoleTab: React.FC = () => {
       <AILogAnalysisDrawer
         visible={aiDrawerVisible}
         initialLogText={aiLogText}
+        context={aiContext}
         onClose={() => setAiDrawerVisible(false)}
       />
     </div>

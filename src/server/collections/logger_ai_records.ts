@@ -49,6 +49,17 @@ export default defineCollection({
       comment: 'AI 诊断 Markdown 报告全文',
     },
     {
+      name: 'messages',
+      type: 'json',
+      comment: '多轮对话消息历史',
+    },
+    {
+      name: 'recordType',
+      type: 'string',
+      defaultValue: 'log_analysis',
+      comment: '记录类型 (log_analysis / health_inspection / cluster_diagnosis)',
+    },
+    {
       name: 'durationMs',
       type: 'integer',
       comment: '诊断耗时 (ms)',

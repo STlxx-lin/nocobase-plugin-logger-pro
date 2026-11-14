@@ -20,6 +20,12 @@ export const CONFIG_KEYS = {
   MAX_DISK_SIZE_MB: 'max_disk_size_mb',
   AUTO_CLEAN_ENABLED: 'auto_clean_enabled',
   AUTO_CLEAN_CRON: 'auto_clean_cron',
+  AI_ALLOW_PRIVATE_LLM: 'ai_allow_private_llm',
+  AI_DEFAULT_SANITIZE: 'ai_default_sanitize',
+  AI_REQUEST_TIMEOUT_MS: 'ai_request_timeout_ms',
+  AI_DEFAULT_EMPLOYEE: 'ai_default_employee',
+  AI_DEFAULT_LLM_SERVICE: 'ai_default_llm_service',
+  AI_DEFAULT_LLM_MODEL: 'ai_default_llm_model',
 };
 
 export const DEFAULT_CONFIGS = {
@@ -40,6 +46,12 @@ export const DEFAULT_CONFIGS = {
   [CONFIG_KEYS.MAX_DISK_SIZE_MB]: '2048',
   [CONFIG_KEYS.AUTO_CLEAN_ENABLED]: 'true',
   [CONFIG_KEYS.AUTO_CLEAN_CRON]: '0 2 * * *', // 每天凌晨2点自动清理
+  [CONFIG_KEYS.AI_ALLOW_PRIVATE_LLM]: 'true', // 默认信任管理员在 llm_services 中配置的本地/内网大模型 (Ollama 等)
+  [CONFIG_KEYS.AI_DEFAULT_SANITIZE]: 'true', // 默认开启发送给大模型前的敏感信息脱敏
+  [CONFIG_KEYS.AI_REQUEST_TIMEOUT_MS]: '45000', // AI 请求默认超时时间 (ms)
+  [CONFIG_KEYS.AI_DEFAULT_EMPLOYEE]: 'system-error-expert', // 默认 AI 员工
+  [CONFIG_KEYS.AI_DEFAULT_LLM_SERVICE]: '', // 默认 LLM 服务 (空则自动选用首个可用真实 LLM 服务)
+  [CONFIG_KEYS.AI_DEFAULT_LLM_MODEL]: '', // 默认 LLM 模型
 };
 
 export const ALERT_RULE_TYPES = {

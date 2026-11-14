@@ -1,4 +1,5 @@
 import { Context, Next } from '@nocobase/actions';
+import { PassThrough } from 'stream';
 import { LogReaderService } from '../services/log-reader.service';
 import { LogConfigService } from '../services/log-config.service';
 import { LogRetentionService } from '../services/log-retention.service';
@@ -238,7 +239,7 @@ export function createLoggerProResource(
           filter,
           limit,
         });
-        await next();
+        return;
       },
 
       getTrace: async (ctx: Context, next: Next) => {
@@ -271,13 +272,260 @@ export function createLoggerProResource(
 
       analyzeErrorLog: async (ctx: Context, next: Next) => {
         const params = getParams(ctx);
-        const { logText, employeeName, llmSelection, context } = params;
+        const { logText, employeeName, llmSelection, context, sanitize, forceHeuristic } = params;
         const result = await aiAnalyzerService.analyzeLog({
           logText: String(logText || ''),
           employeeName: employeeName ? String(employeeName) : undefined,
           llmSelection: typeof llmSelection === 'object' ? llmSelection : undefined,
           context: typeof context === 'object' ? context : undefined,
+          sanitize: sanitize === undefined ? undefined : sanitize === true || sanitize === 'true',
+          forceHeuristic: forceHeuristic === true || forceHeuristic === 'true',
         });
+        ctx.body = result;
+        await next();
+      },
+
+      analyzeErrorLogStream: async (ctx: Context) => {
+        const params = getParams(ctx);
+        const { logText, employeeName, llmSelection, context, sanitize, forceHeuristic } = params;
+        const stream = new PassThrough();
+        (ctx as any).withoutDataWrapping = true;
+        ctx.status = 200;
+        ctx.set('Content-Type', 'text/event-stream; charset=utf-8');
+        ctx.set('Cache-Control', 'no-cache, no-transform');
+        ctx.set('Connection', 'keep-alive');
+        ctx.set('X-Accel-Buffering', 'no');
+        ctx.body = stream;
+
+        const writeEvent = (payload: any) => {
+          if (!stream.writableEnded) {
+            stream.write(`data: ${JSON.stringify(payload)}\n\n`);
+          }
+        };
+
+        aiAnalyzerService
+          .analyzeLogStream(
+            {
+              logText: String(logText || ''),
+              employeeName: employeeName ? String(employeeName) : undefined,
+              llmSelection: typeof llmSelection === 'object' ? llmSelection : undefined,
+              context: typeof context === 'object' ? context : undefined,
+              sanitize: sanitize === undefined ? undefined : sanitize === true || sanitize === 'true',
+              forceHeuristic: forceHeuristic === true || forceHeuristic === 'true',
+            },
+            {
+              onMeta: (meta) => writeEvent({ type: 'meta', ...meta }),
+              onReasoning: (content) => writeEvent({ type: 'reasoning', content }),
+              onChunk: (content) => writeEvent({ type: 'chunk', content }),
+              onDone: (result) => {
+                writeEvent({ type: 'done', ...result });
+                if (!stream.writableEnded) stream.end();
+              },
+              onError: (err: any) => {
+                writeEvent({ type: 'error', message: err.message, errorCode: err?.code || 'LLM_CALL_FAILED' });
+                if (!stream.writableEnded) stream.end();
+              },
+            },
+          )
+          .catch((err: any) => {
+            writeEvent({ type: 'error', message: err?.message || 'Stream error', errorCode: err?.code || 'LLM_CALL_FAILED' });
+            if (!stream.writableEnded) stream.end();
+          });
+      },
+
+      previewSanitizedLog: async (ctx: Context, next: Next) => {
+        const params = getParams(ctx);
+        const { logText, sanitize } = params;
+        const shouldSanitize = sanitize === undefined ? true : sanitize === true || sanitize === 'true';
+        const result = aiAnalyzerService.prepareLogForAI(String(logText || ''), shouldSanitize);
+        ctx.body = result;
+        await next();
+      },
+
+      aiFollowUp: async (ctx: Context, next: Next) => {
+        const params = getParams(ctx);
+        const { recordId, question, messages, logText, employeeName, llmSelection, sanitize, forceHeuristic } = params;
+        const result = await aiAnalyzerService.followUpChat({
+          recordId,
+          question: String(question || ''),
+          messages: Array.isArray(messages) ? messages : undefined,
+          logText: logText ? String(logText) : undefined,
+          employeeName: employeeName ? String(employeeName) : undefined,
+          llmSelection: typeof llmSelection === 'object' ? llmSelection : undefined,
+          sanitize: sanitize === undefined ? undefined : sanitize === true || sanitize === 'true',
+          forceHeuristic: forceHeuristic === true || forceHeuristic === 'true',
+        });
+        ctx.body = result;
+        await next();
+      },
+
+      aiFollowUpStream: async (ctx: Context) => {
+        const params = getParams(ctx);
+        const { recordId, question, messages, logText, employeeName, llmSelection, sanitize, forceHeuristic } = params;
+        const stream = new PassThrough();
+        (ctx as any).withoutDataWrapping = true;
+        ctx.status = 200;
+        ctx.set('Content-Type', 'text/event-stream; charset=utf-8');
+        ctx.set('Cache-Control', 'no-cache, no-transform');
+        ctx.set('Connection', 'keep-alive');
+        ctx.set('X-Accel-Buffering', 'no');
+        ctx.body = stream;
+
+        const writeEvent = (payload: any) => {
+          if (!stream.writableEnded) {
+            stream.write(`data: ${JSON.stringify(payload)}\n\n`);
+          }
+        };
+
+        aiAnalyzerService
+          .followUpChatStream(
+            {
+              recordId,
+              question: String(question || ''),
+              messages: Array.isArray(messages) ? messages : undefined,
+              logText: logText ? String(logText) : undefined,
+              employeeName: employeeName ? String(employeeName) : undefined,
+              llmSelection: typeof llmSelection === 'object' ? llmSelection : undefined,
+              sanitize: sanitize === undefined ? undefined : sanitize === true || sanitize === 'true',
+              forceHeuristic: forceHeuristic === true || forceHeuristic === 'true',
+            },
+            {
+              onReasoning: (content) => writeEvent({ type: 'reasoning', content }),
+              onChunk: (content) => writeEvent({ type: 'chunk', content }),
+              onDone: (result) => {
+                writeEvent({ type: 'done', ...result });
+                if (!stream.writableEnded) stream.end();
+              },
+              onError: (err: any) => {
+                writeEvent({ type: 'error', message: err.message, errorCode: err?.code || 'LLM_CALL_FAILED' });
+                if (!stream.writableEnded) stream.end();
+              },
+            },
+          )
+          .catch((err: any) => {
+            writeEvent({ type: 'error', message: err?.message || 'Follow-up stream error', errorCode: err?.code || 'LLM_CALL_FAILED' });
+            if (!stream.writableEnded) stream.end();
+          });
+      },
+
+      clusterErrorLogs: async (ctx: Context, next: Next) => {
+        const params = getParams(ctx);
+        const { fileName, lines, logLines } = params;
+        let targetLines: string[] = Array.isArray(logLines) ? logLines.map(String) : [];
+
+        if (targetLines.length === 0) {
+          let targetFile = fileName ? String(fileName) : '';
+          if (!targetFile) {
+            const files = await readerService.listFiles().catch(() => []);
+            const errFile = files.find((f) => f.category === 'Error') || files.find((f) => f.category === 'System') || files[0];
+            targetFile = errFile?.relativePath || errFile?.name || '';
+          }
+          if (targetFile) {
+            const readRes = await readerService
+              .readLogLines({ fileName: targetFile, lines: lines ? Number(lines) : 1000 })
+              .catch(() => ({ lines: [] as string[] }));
+            targetLines = readRes.lines || [];
+          }
+        }
+
+        const clusters = aiAnalyzerService.clusterLogs(targetLines);
+        ctx.body = {
+          clusters,
+          totalClusters: clusters.length,
+          scannedLines: targetLines.length,
+        };
+        await next();
+      },
+
+      healthInspection: async (ctx: Context, next: Next) => {
+        const params = getParams(ctx);
+        const { llmSelection, forceHeuristic } = params;
+        const overview = await dashboardService.getOverview();
+        const files = await readerService.listFiles().catch(() => []);
+        const errFile = files.find((f) => f.category === 'Error') || files.find((f) => f.category === 'System') || files[0];
+        let clusters: any[] = [];
+        if (errFile) {
+          const readRes = await readerService.readLogLines({ fileName: errFile.relativePath || errFile.name, lines: 500 }).catch(() => ({ lines: [] }));
+          clusters = aiAnalyzerService.clusterLogs(readRes.lines || []);
+        }
+        const result = await aiAnalyzerService.runHealthInspection(
+          overview,
+          clusters,
+          typeof llmSelection === 'object' ? llmSelection : undefined,
+          { forceHeuristic: forceHeuristic === true || forceHeuristic === 'true' },
+        );
+        ctx.body = result;
+        await next();
+      },
+
+      healthInspectionStream: async (ctx: Context) => {
+        const params = getParams(ctx);
+        const { llmSelection, forceHeuristic } = params;
+        const stream = new PassThrough();
+        (ctx as any).withoutDataWrapping = true;
+        ctx.status = 200;
+        ctx.set('Content-Type', 'text/event-stream; charset=utf-8');
+        ctx.set('Cache-Control', 'no-cache, no-transform');
+        ctx.set('Connection', 'keep-alive');
+        ctx.set('X-Accel-Buffering', 'no');
+        ctx.body = stream;
+
+        const writeEvent = (payload: any) => {
+          if (!stream.writableEnded) {
+            stream.write(`data: ${JSON.stringify(payload)}\n\n`);
+          }
+        };
+
+        (async () => {
+          const overview = await dashboardService.getOverview();
+          const files = await readerService.listFiles().catch(() => []);
+          const errFile = files.find((f) => f.category === 'Error') || files.find((f) => f.category === 'System') || files[0];
+          let clusters: any[] = [];
+          if (errFile) {
+            const readRes = await readerService.readLogLines({ fileName: errFile.relativePath || errFile.name, lines: 500 }).catch(() => ({ lines: [] }));
+            clusters = aiAnalyzerService.clusterLogs(readRes.lines || []);
+          }
+          await aiAnalyzerService.runHealthInspectionStream(
+            overview,
+            clusters,
+            typeof llmSelection === 'object' ? llmSelection : undefined,
+            {
+              onMeta: (meta) => writeEvent({ type: 'meta', ...meta }),
+              onReasoning: (content) => writeEvent({ type: 'reasoning', content }),
+              onChunk: (content) => writeEvent({ type: 'chunk', content }),
+              onDone: (result) => {
+                writeEvent({ type: 'done', ...result });
+                if (!stream.writableEnded) stream.end();
+              },
+              onError: (err: any) => {
+                writeEvent({ type: 'error', message: err.message, errorCode: err?.code || 'LLM_CALL_FAILED' });
+                if (!stream.writableEnded) stream.end();
+              },
+            },
+            { forceHeuristic: forceHeuristic === true || forceHeuristic === 'true' },
+          );
+        })().catch((err: any) => {
+          writeEvent({ type: 'error', message: err?.message || 'Inspection stream error', errorCode: err?.code || 'LLM_CALL_FAILED' });
+          if (!stream.writableEnded) stream.end();
+        });
+      },
+
+      getLatestHealthInspection: async (ctx: Context, next: Next) => {
+        const result = await aiAnalyzerService.getLatestHealthInspection();
+        ctx.body = result || null;
+        await next();
+      },
+
+      nlToFilter: async (ctx: Context, next: Next) => {
+        const params = getParams(ctx);
+        const { query, llmSelection, forceHeuristic } = params;
+        const availableCollections = Array.from(ctx.app.db.collections.keys()).map(String);
+        const result = await aiAnalyzerService.naturalLanguageToFilter(
+          String(query || ''),
+          availableCollections,
+          typeof llmSelection === 'object' ? llmSelection : undefined,
+          { forceHeuristic: forceHeuristic === true || forceHeuristic === 'true' },
+        );
         ctx.body = result;
         await next();
       },
@@ -290,6 +538,17 @@ export function createLoggerProResource(
           pageSize: Number(pageSize) || 20,
         });
         ctx.body = result;
+        await next();
+      },
+
+      getAIAnalysisRecord: async (ctx: Context, next: Next) => {
+        const params = getParams(ctx);
+        const { id } = params;
+        if (id === undefined || id === null || id === '') {
+          ctx.throw(400, 'id is required');
+        }
+        const result = await aiAnalyzerService.getAnalysisRecord(id);
+        ctx.body = result || {};
         await next();
       },
 

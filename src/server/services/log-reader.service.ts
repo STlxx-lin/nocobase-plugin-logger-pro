@@ -22,6 +22,7 @@ export interface ReadLogOptions {
   level?: string;
   isRegex?: boolean;
   reverse?: boolean;
+  timeoutMs?: number;
 }
 
 export interface TailLogOptions {
@@ -79,11 +80,92 @@ export class LogReaderService {
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
   }
 
-  private detectCategory(fileName: string): string {
-    if (fileName.startsWith('system_error')) return 'Error';
-    if (fileName.startsWith('system')) return 'System';
-    if (fileName.startsWith('sql')) return 'SQL';
-    if (fileName.startsWith('request')) return 'Request';
+  public detectCategory(fileName: string, relativePath?: string): string {
+    const fullRelative = (relativePath || fileName || '').replace(/\\/g, '/').toLowerCase();
+    const baseName = (fileName || '').replace(/\\/g, '/').split('/').pop()?.toLowerCase() || '';
+
+    // 1. 系统异常 / 错误日志
+    if (baseName.startsWith('system_error') || fullRelative.includes('system_error')) {
+      return 'Error';
+    }
+
+    // 2. 工作流日志 (workflows/* 或 workflow/*)
+    if (
+      fullRelative.startsWith('workflows/') ||
+      fullRelative.startsWith('workflow/') ||
+      fullRelative.includes('/workflows/') ||
+      fullRelative.includes('/workflow/') ||
+      baseName.startsWith('workflow')
+    ) {
+      return 'Workflow';
+    }
+
+    // 3. 通知管理日志 (notification-manager/* 或 notifications/*)
+    if (
+      fullRelative.startsWith('notification-manager/') ||
+      fullRelative.startsWith('notifications/') ||
+      fullRelative.startsWith('notification/') ||
+      fullRelative.includes('/notification-manager/') ||
+      fullRelative.includes('/notifications/') ||
+      fullRelative.includes('/notification/') ||
+      baseName.startsWith('notification')
+    ) {
+      return 'Notification';
+    }
+
+    // 4. SQL 查询日志
+    if (
+      baseName.startsWith('sql') ||
+      fullRelative.startsWith('sql/') ||
+      fullRelative.includes('/sql/')
+    ) {
+      return 'SQL';
+    }
+
+    // 5. API / 请求日志
+    if (
+      baseName.startsWith('request') ||
+      fullRelative.startsWith('request/') ||
+      fullRelative.startsWith('custom-request/') ||
+      fullRelative.startsWith('api/') ||
+      fullRelative.includes('/request/') ||
+      fullRelative.includes('/custom-request/') ||
+      fullRelative.includes('/api/')
+    ) {
+      return 'Request';
+    }
+
+    // 6. 系统运行日志
+    if (
+      baseName.startsWith('system') ||
+      fullRelative.startsWith('system/') ||
+      fullRelative.includes('/system/')
+    ) {
+      return 'System';
+    }
+
+    // 7. 数据导出日志
+    if (
+      fullRelative.startsWith('action-export/') ||
+      fullRelative.startsWith('export/') ||
+      fullRelative.includes('/action-export/') ||
+      fullRelative.includes('/export/') ||
+      baseName.startsWith('export')
+    ) {
+      return 'Export';
+    }
+
+    // 8. 数据同步日志
+    if (
+      fullRelative.startsWith('user-data-sync/') ||
+      fullRelative.startsWith('sync/') ||
+      fullRelative.includes('/user-data-sync/') ||
+      fullRelative.includes('/sync/') ||
+      baseName.startsWith('sync')
+    ) {
+      return 'Sync';
+    }
+
     return 'Custom';
   }
 
@@ -101,14 +183,15 @@ export class LogReaderService {
             await scanDir(fullPath, relPath);
           } else if (entry.isFile() && entry.name.endsWith('.log')) {
             const stat = await fsp.stat(fullPath);
+            const normalizedRelPath = relPath.replace(/\\/g, '/');
             result.push({
               name: entry.name,
-              relativePath: relPath.replace(/\\/g, '/'),
+              relativePath: normalizedRelPath,
               size: stat.size,
               sizeBytes: stat.size,
               sizeFormatted: this.formatBytes(stat.size),
               mtime: stat.mtime,
-              category: this.detectCategory(entry.name),
+              category: this.detectCategory(entry.name, normalizedRelPath),
             });
           }
         }
@@ -160,14 +243,33 @@ export class LogReaderService {
       let totalMatched = 0;
       let linesScanned = 0;
       let truncated = false;
+      let isClosed = false;
       const scanStart = Date.now();
+      const timeBudget = typeof options.timeoutMs === 'number' ? options.timeoutMs : MAX_SCAN_MS;
+
+      const safeCleanup = () => {
+        isClosed = true;
+        try {
+          rl.close();
+        } catch {}
+        if (!fileStream.destroyed) {
+          try {
+            fileStream.destroy();
+          } catch {}
+        }
+      };
 
       rl.on('line', (rawLine: string) => {
+        // 若已截断或提前关闭，短路跳过后续 chunk 缓冲区内的残存行，防止状态被污染
+        if (truncated || isClosed) {
+          return;
+        }
+
         linesScanned++;
-        // 时间预算：达到上限立即停止扫描，返回已收集结果
-        if ((linesScanned & 511) === 0 && Date.now() - scanStart > MAX_SCAN_MS) {
+        // 时间预算：达到上限立即停止扫描，主动释放底层流句柄并返回已收集结果
+        if ((linesScanned & 127) === 0 && Date.now() - scanStart > timeBudget) {
           truncated = true;
-          rl.close();
+          safeCleanup();
           return;
         }
         const line = cleanAnsi(rawLine);
@@ -204,7 +306,11 @@ export class LogReaderService {
         }
       });
 
+      let hasError = false;
+
       rl.on('close', () => {
+        safeCleanup();
+        if (hasError) return;
         const finalLines = collectedLines.slice(-maxLines);
         if (options.reverse) {
           finalLines.reverse();
@@ -218,9 +324,13 @@ export class LogReaderService {
       });
 
       rl.on('error', (err) => {
+        hasError = true;
+        safeCleanup();
         reject(err);
       });
       fileStream.on('error', (err) => {
+        hasError = true;
+        safeCleanup();
         reject(err);
       });
     });
@@ -262,7 +372,14 @@ export class LogReaderService {
     }
 
     const content = buffer.toString('utf-8');
-    const lines = content.split(/\r?\n/).map(cleanAnsi).filter((l) => l.trim().length > 0);
+    const rawLines = content.split(/\r?\n/);
+
+    // 当非文件起始位置（offset > 0）截断读取时，首行大概率是切断的残损内容，予以丢弃
+    if (offset > 0 && rawLines.length > 0) {
+      rawLines.shift();
+    }
+
+    const lines = rawLines.map(cleanAnsi).filter((l) => l.trim().length > 0);
     const newOffset = offset + bytesToRead;
 
     return {

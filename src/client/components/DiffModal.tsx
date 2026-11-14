@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import {
-  Modal,
+  Drawer,
   Tag,
   Descriptions,
   Empty,
@@ -372,7 +372,7 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
     if (onlyHasIds) {
       return (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ fontSize: 11, color: token.colorTextSecondary }}>📦 包含 {value.length} 条关联 ID</div>
+          <div style={{ fontSize: 11, color: token.colorTextSecondary }}>包含 {value.length} 条关联 ID</div>
           <Space wrap size={[6, 6]}>
             {value.map((item: any, idx: number) => {
               const displayId = item.id || item.ID || item.key || item;
@@ -425,7 +425,7 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
             <TableOutlined style={{ marginRight: 4 }} /> 子表格 (共 {value.length} 行)
           </span>
           <Button
-            size="small"
+            size="middle"
             type="text"
             icon={viewMode === 'visual' ? <CodeOutlined /> : <TableOutlined />}
             onClick={() => setViewMode(viewMode === 'visual' ? 'json' : 'visual')}
@@ -467,7 +467,7 @@ const ComplexDataViewer: React.FC<{ value: any; isDiff?: boolean; type?: 'old' |
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button
-          size="small"
+          size="middle"
           type="text"
           icon={viewMode === 'visual' ? <CodeOutlined /> : <AppstoreOutlined />}
           onClick={() => setViewMode(viewMode === 'visual' ? 'json' : 'visual')}
@@ -636,20 +636,19 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
   });
 
   return (
-    <Modal
+    <Drawer
       title={
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontWeight: 600 }}>🛡️ 数据变更差异对比 (Diff View)</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600 }}>数据变更差异对比 (Diff)</span>
           <Tag color="blue">{record.collectionName}</Tag>
           <Tag color="cyan">{record.actionName}</Tag>
           {record.recordId && <Tag color="purple">ID: {record.recordId}</Tag>}
         </div>
       }
+      placement="right"
       open={visible}
-      onCancel={onClose}
-      footer={null}
-      width={960}
-      styles={{ body: { maxHeight: '76vh', overflowY: 'auto', padding: '16px 20px' } }}
+      onClose={onClose}
+      width={880}
     >
       <Spin spinning={loading || fieldsLoading}>
         {/* 顶部元数据概览 */}
@@ -662,7 +661,9 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
             <Descriptions.Item label="请求路径">
               <Tag>{record.method}</Tag> {record.path}
             </Descriptions.Item>
-            <Descriptions.Item label="操作时间">{new Date(record.createdAt).toLocaleString()}</Descriptions.Item>
+            <Descriptions.Item label="操作时间">
+              {record.createdAt ? new Date(record.createdAt).toLocaleString() : '-'}
+            </Descriptions.Item>
           </Descriptions>
         </div>
 
@@ -680,7 +681,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
           }}
         >
           <Radio.Group
-            size="small"
+            size="middle"
             value={viewMode}
             onChange={(e) => setViewMode(e.target.value)}
             buttonStyle="solid"
@@ -696,7 +697,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
           </Radio.Group>
 
           <Input
-            size="small"
+            size="middle"
             placeholder="搜索字段名/标题/属性值..."
             prefix={<SearchOutlined style={{ color: token.colorTextPlaceholder }} />}
             value={keyword}
@@ -836,7 +837,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
         ) : isDestroy && Object.keys(beforeObj).length > 0 ? (
           <div>
             <div style={{ marginBottom: 8, color: token.colorError, fontWeight: 600 }}>
-              🗑️ 删除前历史属性：
+              删除前历史属性：
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, border: `1px solid ${token.colorBorderSecondary}` }}>
               <thead>
@@ -867,7 +868,7 @@ export const DiffModal: React.FC<DiffModalProps> = ({ visible, onClose, record, 
           <Empty description={loading ? '正在加载数据快照...' : '该操作无任何字段属性变更记录'} />
         )}
       </Spin>
-    </Modal>
+    </Drawer>
   );
 };
 

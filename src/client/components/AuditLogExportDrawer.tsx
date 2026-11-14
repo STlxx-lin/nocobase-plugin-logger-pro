@@ -35,9 +35,11 @@ export interface AuditLogExportDrawerProps {
 const EXPORT_FIELD_OPTIONS = [
   { label: '发生时间 (createdAt)', value: 'createdAt' },
   { label: '请求ID (reqId)', value: 'reqId' },
-  { label: '操作用户名 (username)', value: 'username' },
+  { label: '操作用户名 (userUsername)', value: 'userUsername' },
+  { label: '用户昵称 (userNickname)', value: 'userNickname' },
   { label: '用户ID (userId)', value: 'userId' },
   { label: '客户端IP (ip)', value: 'ip' },
+  { label: 'User-Agent (userAgent)', value: 'userAgent' },
   { label: '请求方法 (method)', value: 'method' },
   { label: '请求路径 (path)', value: 'path' },
   { label: '数据表 (collectionName)', value: 'collectionName' },
@@ -45,21 +47,23 @@ const EXPORT_FIELD_OPTIONS = [
   { label: '目标记录ID (recordId)', value: 'recordId' },
   { label: '状态码 (statusCode)', value: 'statusCode' },
   { label: '响应耗时 (durationMs)', value: 'durationMs' },
-  { label: '变更字段摘要 (diffSummary)', value: 'diffSummary' },
-  { label: '变更前快照 (previousData)', value: 'previousData' },
-  { label: '变更后快照 (newData)', value: 'newData' },
+  { label: '变更字段差异 (diff)', value: 'diff' },
+  { label: '变更前快照 (beforeData)', value: 'beforeData' },
+  { label: '变更后快照 (afterData)', value: 'afterData' },
+  { label: '请求参数 (params)', value: 'params' },
+  { label: '异常信息 (errorMessage)', value: 'errorMessage' },
 ];
 
 const DEFAULT_FIELDS = [
   'createdAt',
-  'username',
+  'userUsername',
   'ip',
   'collectionName',
   'actionName',
   'recordId',
   'statusCode',
   'durationMs',
-  'diffSummary',
+  'diff',
 ];
 
 export const AuditLogExportDrawer: React.FC<AuditLogExportDrawerProps> = ({
@@ -113,9 +117,10 @@ export const AuditLogExportDrawer: React.FC<AuditLogExportDrawerProps> = ({
         filter.createdAt = { $gte: start.toISOString() };
       }
 
-      // 用户名过滤
-      if (values.username && values.username.trim()) {
-        filter.username = { $includes: values.username.trim() };
+      // 用户名过滤（兼容 userUsername 与 username）
+      const usernameVal = values.userUsername || values.username;
+      if (usernameVal && usernameVal.trim()) {
+        filter.userUsername = { $includes: usernameVal.trim() };
       }
 
       // 数据表过滤
@@ -182,10 +187,11 @@ export const AuditLogExportDrawer: React.FC<AuditLogExportDrawerProps> = ({
       width={600}
       extra={
         <Space>
-          <Button onClick={onClose} disabled={exporting}>
+          <Button size="middle" onClick={onClose} disabled={exporting}>
             取消
           </Button>
           <Button
+            size="middle"
             type="primary"
             icon={<ExportOutlined />}
             loading={exporting}
@@ -236,7 +242,7 @@ export const AuditLogExportDrawer: React.FC<AuditLogExportDrawerProps> = ({
               value={timeRangeType}
               onChange={(e) => setTimeRangeType(e.target.value)}
               buttonStyle="solid"
-              size="small"
+              size="middle"
             >
               <Radio.Button value="today">今日记录</Radio.Button>
               <Radio.Button value="7d">近 7 天</Radio.Button>
@@ -253,7 +259,7 @@ export const AuditLogExportDrawer: React.FC<AuditLogExportDrawerProps> = ({
           </div>
           <Row gutter={16}>
             <Col span={12}>
-              <Form.Item name="username" label="操作用户名">
+              <Form.Item name="userUsername" label="操作用户名">
                 <Input placeholder="输入用户名模糊搜索" allowClear />
               </Form.Item>
             </Col>
@@ -308,13 +314,13 @@ export const AuditLogExportDrawer: React.FC<AuditLogExportDrawerProps> = ({
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
             <strong><CheckSquareOutlined /> 自定义导出字段 ({selectedFields.length}/{EXPORT_FIELD_OPTIONS.length})</strong>
             <Space size="small">
-              <Button size="small" type="link" onClick={handleSelectAll}>
+              <Button size="middle" type="link" onClick={handleSelectAll}>
                 全选
               </Button>
-              <Button size="small" type="link" onClick={handleSelectDefault}>
+              <Button size="middle" type="link" onClick={handleSelectDefault}>
                 默认字段
               </Button>
-              <Button size="small" type="link" danger onClick={handleClearAll}>
+              <Button size="middle" type="link" danger onClick={handleClearAll}>
                 清空
               </Button>
             </Space>

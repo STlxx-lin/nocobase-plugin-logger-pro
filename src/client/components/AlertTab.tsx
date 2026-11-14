@@ -6,7 +6,6 @@ import {
   Space,
   Tag,
   Switch,
-  Modal,
   Form,
   Input,
   Select,
@@ -14,7 +13,8 @@ import {
   message,
   Popconfirm,
   Drawer,
-  Alert,
+  Descriptions,
+  theme,
 } from 'antd';
 import {
   PlusOutlined,
@@ -23,26 +23,26 @@ import {
   DeleteOutlined,
   ReloadOutlined,
   HistoryOutlined,
-  CheckCircleOutlined,
-  CloseCircleOutlined,
-  NotificationOutlined,
+  SaveOutlined,
 } from '@ant-design/icons';
 import { useLoggerProAPI } from '../context/LoggerProContext';
 
 export const AlertTab: React.FC = () => {
+  const { token } = theme.useToken();
   const api = useLoggerProAPI();
   const [loading, setLoading] = useState(false);
   const [rules, setRules] = useState<any[]>([]);
 
-  // 模态框
-  const [modalVisible, setModalVisible] = useState(false);
+  // 规则创建/编辑右侧 Drawer
+  const [drawerVisible, setDrawerVisible] = useState(false);
   const [editingRule, setEditingRule] = useState<any>(null);
-  const [modalForm] = Form.useForm();
+  const [savingRule, setSavingRule] = useState(false);
+  const [drawerForm] = Form.useForm();
   const [channelType, setChannelType] = useState<string>('wecom');
   const [ruleType, setRuleType] = useState<string>('error_log');
 
   // 测试发送状态
-  const [testing, setTesting] = useState(false);
+  const [testingId, setTestingId] = useState<number | null>(null);
 
   // 历史记录抽屉
   const [historyDrawerVisible, setHistoryDrawerVisible] = useState(false);
@@ -74,8 +74,7 @@ export const AlertTab: React.FC = () => {
         params: { pageSize: 50, sort: ['-createdAt'] },
       });
       setHistoryLogs(res?.data?.data || []);
-    } catch {}
-    finally {
+    } catch {} finally {
       setHistoryLoading(false);
     }
   };
@@ -84,22 +83,21 @@ export const AlertTab: React.FC = () => {
     fetchRules();
   }, []);
 
-  // 打开创建/编辑弹窗
-  const handleOpenModal = (rule?: any) => {
+  // 打开创建/编辑右侧 Drawer
+  const handleOpenDrawer = (rule?: any) => {
     setEditingRule(rule || null);
     if (rule) {
       setChannelType(rule.channelType);
       setRuleType(rule.type);
-      modalForm.setFieldsValue({
+      drawerForm.setFieldsValue({
         name: rule.name,
         type: rule.type,
         channelType: rule.channelType,
         silenceMinutes: rule.silenceMinutes || 5,
         enabled: rule.enabled !== false,
-        // 条件展开
+        aiSummaryEnabled: rule.aiSummaryEnabled === true,
         keyword: rule.condition?.keyword,
         thresholdMs: rule.condition?.thresholdMs || 1000,
-        // 渠道配置展开
         webhookUrl: rule.channelConfig?.webhookUrl,
         secret: rule.channelConfig?.secret,
         method: rule.channelConfig?.method || 'POST',
@@ -108,21 +106,23 @@ export const AlertTab: React.FC = () => {
     } else {
       setChannelType('wecom');
       setRuleType('error_log');
-      modalForm.resetFields();
-      modalForm.setFieldsValue({
+      drawerForm.resetFields();
+      drawerForm.setFieldsValue({
         type: 'error_log',
         channelType: 'wecom',
         silenceMinutes: 5,
         enabled: true,
+        aiSummaryEnabled: false,
         thresholdMs: 1000,
         method: 'POST',
       });
     }
-    setModalVisible(true);
+    setDrawerVisible(true);
   };
 
   // 保存规则
   const handleSaveRule = async (values: any) => {
+    setSavingRule(true);
     try {
       const condition: any = {};
       if (values.type === 'keyword') {
@@ -134,7 +134,7 @@ export const AlertTab: React.FC = () => {
       const channelConfig: any = {
         webhookUrl: values.webhookUrl,
         secret: values.secret,
-        method: values.method,
+        method: values.method || editingRule?.channelConfig?.method || 'POST',
         channelId: values.channelId,
       };
 
@@ -146,6 +146,7 @@ export const AlertTab: React.FC = () => {
         channelConfig,
         silenceMinutes: values.silenceMinutes,
         enabled: values.enabled,
+        aiSummaryEnabled: Boolean(values.aiSummaryEnabled),
       };
 
       if (editingRule) {
@@ -165,10 +166,12 @@ export const AlertTab: React.FC = () => {
         message.success('告警规则已创建');
       }
 
-      setModalVisible(false);
+      setDrawerVisible(false);
       fetchRules();
     } catch (err: any) {
       message.error(`保存失败: ${err.message}`);
+    } finally {
+      setSavingRule(false);
     }
   };
 
@@ -205,7 +208,7 @@ export const AlertTab: React.FC = () => {
 
   // 测试发送
   const handleTestAlert = async (ruleData: any) => {
-    setTesting(true);
+    setTestingId(ruleData.id);
     try {
       const res = await api.request({
         url: 'loggerPro:testAlert',
@@ -214,14 +217,14 @@ export const AlertTab: React.FC = () => {
       });
       const data = res?.data?.data || res?.data || {};
       if (data.success) {
-        message.success('🎉 测试告警发送成功！请检查接收端通知。');
+        message.success('测试告警发送成功，请检查接收端通知');
       } else {
         message.error(`测试告警发送失败: ${data.error}`);
       }
     } catch (err: any) {
       message.error(`测试发送异常: ${err.message}`);
     } finally {
-      setTesting(false);
+      setTestingId(null);
     }
   };
 
@@ -259,39 +262,40 @@ export const AlertTab: React.FC = () => {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      {/* 顶部操作工具栏 */}
-      <Card size="small" bordered>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <Space>
-            <span style={{ fontSize: 16, fontWeight: 600 }}>🔔 异常日志告警管理</span>
-            <Tag color="processing">多渠道通知分发</Tag>
+      {/* 单行紧凑工具条 */}
+      <Card size="small" bordered bodyStyle={{ padding: '10px 12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+          <Space size={8}>
+            <span style={{ fontSize: 14, fontWeight: 600, color: token.colorText }}>告警规则</span>
+            <Tag color="blue" style={{ margin: 0 }}>{rules.length} 条</Tag>
           </Space>
 
-          <Space>
+          <Space size={8}>
             <Button
+              size="middle"
               icon={<HistoryOutlined />}
               onClick={() => {
                 fetchHistoryLogs();
                 setHistoryDrawerVisible(true);
               }}
             >
-              告警发送历史
+              告警历史
             </Button>
-            <Button icon={<ReloadOutlined />} onClick={fetchRules} loading={loading}>
+            <Button size="middle" icon={<ReloadOutlined />} onClick={fetchRules} loading={loading}>
               刷新
             </Button>
-            <Button type="primary" icon={<PlusOutlined />} onClick={() => handleOpenModal()}>
-              新建告警规则
+            <Button size="middle" type="primary" icon={<PlusOutlined />} onClick={() => handleOpenDrawer()}>
+              新建规则
             </Button>
           </Space>
         </div>
       </Card>
 
-      {/* 告警规则列表 */}
+      {/* 核心字段告警规则表 */}
       <Card bordered bodyStyle={{ padding: 0 }}>
         <Table
           rowKey="id"
-          size="middle"
+          size="small"
           loading={loading}
           dataSource={rules}
           pagination={false}
@@ -300,42 +304,31 @@ export const AlertTab: React.FC = () => {
               title: '规则名称',
               dataIndex: 'name',
               render: (name, r) => (
-                <div>
-                  <span style={{ fontWeight: 600 }}>{name}</span>
-                  {r.condition?.keyword && (
-                    <div style={{ fontSize: 12, color: '#8c8c8c' }}>匹配: "{r.condition.keyword}"</div>
-                  )}
-                  {r.condition?.thresholdMs && (
-                    <div style={{ fontSize: 12, color: '#8c8c8c' }}>阈值: &gt;={r.condition.thresholdMs}ms</div>
-                  )}
-                </div>
+                <Space size={6}>
+                  <span style={{ fontWeight: 600, color: token.colorText }}>{name}</span>
+                  {r.aiSummaryEnabled && <Tag color="purple">AI 摘要</Tag>}
+                </Space>
               ),
             },
             {
               title: '触发类型',
               dataIndex: 'type',
+              width: 140,
               render: (type) => getRuleTypeTag(type),
             },
             {
               title: '通知渠道',
               dataIndex: 'channelType',
+              width: 140,
               render: (ch) => getChannelTag(ch),
-            },
-            {
-              title: '静默周期',
-              dataIndex: 'silenceMinutes',
-              render: (m) => `${m || 5} 分钟防风暴`,
-            },
-            {
-              title: '最近触发',
-              dataIndex: 'lastTriggeredAt',
-              render: (t) => (t ? new Date(t).toLocaleString() : <span style={{ color: '#bfbfbf' }}>从未触发</span>),
             },
             {
               title: '启用状态',
               dataIndex: 'enabled',
+              width: 100,
               render: (enabled, r) => (
                 <Switch
+                  size="small"
                   checked={enabled !== false}
                   onChange={(checked) => handleToggleEnabled(r, checked)}
                 />
@@ -343,23 +336,20 @@ export const AlertTab: React.FC = () => {
             },
             {
               title: '操作',
+              width: 210,
               render: (_, r) => (
-                <Space>
+                <Space size={2}>
+                  <Button size="middle" type="link" icon={<EditOutlined />} onClick={() => handleOpenDrawer(r)}>
+                    详情 / 编辑
+                  </Button>
                   <Button
-                    size="small"
+                    size="middle"
                     type="link"
                     icon={<SendOutlined />}
+                    loading={testingId === r.id}
                     onClick={() => handleTestAlert(r)}
                   >
                     测试
-                  </Button>
-                  <Button
-                    size="small"
-                    type="link"
-                    icon={<EditOutlined />}
-                    onClick={() => handleOpenModal(r)}
-                  >
-                    编辑
                   </Button>
                   <Popconfirm
                     title="确定删除此告警规则？"
@@ -367,7 +357,7 @@ export const AlertTab: React.FC = () => {
                     okText="确定"
                     cancelText="取消"
                   >
-                    <Button size="small" type="link" danger icon={<DeleteOutlined />}>
+                    <Button size="middle" type="link" danger icon={<DeleteOutlined />}>
                       删除
                     </Button>
                   </Popconfirm>
@@ -379,16 +369,41 @@ export const AlertTab: React.FC = () => {
         />
       </Card>
 
-      {/* 创建 / 编辑规则弹窗 */}
-      <Modal
-        title={editingRule ? '✏️ 编辑告警规则' : '➕ 新建告警规则'}
-        open={modalVisible}
-        onCancel={() => setModalVisible(false)}
-        onOk={() => modalForm.submit()}
-        width={680}
+      {/* 创建 / 编辑规则右侧 Drawer */}
+      <Drawer
+        title={editingRule ? `编辑告警规则 · ${editingRule.name}` : '新建告警规则'}
+        placement="right"
+        width={560}
+        open={drawerVisible}
+        onClose={() => setDrawerVisible(false)}
         destroyOnClose
+        extra={
+          <Space>
+            <Button size="middle" onClick={() => setDrawerVisible(false)}>
+              取消
+            </Button>
+            <Button
+              size="middle"
+              type="primary"
+              icon={<SaveOutlined />}
+              loading={savingRule}
+              onClick={() => drawerForm.submit()}
+            >
+              保存规则
+            </Button>
+          </Space>
+        }
       >
-        <Form form={modalForm} layout="vertical" onFinish={handleSaveRule}>
+        {editingRule && (
+          <Descriptions size="small" column={2} bordered style={{ marginBottom: 16 }}>
+            <Descriptions.Item label="静默周期">{editingRule.silenceMinutes || 5} 分钟</Descriptions.Item>
+            <Descriptions.Item label="最近触发">
+              {editingRule.lastTriggeredAt ? new Date(editingRule.lastTriggeredAt).toLocaleString() : '从未触发'}
+            </Descriptions.Item>
+          </Descriptions>
+        )}
+
+        <Form form={drawerForm} layout="vertical" onFinish={handleSaveRule}>
           <Form.Item
             name="name"
             label="规则名称"
@@ -405,10 +420,10 @@ export const AlertTab: React.FC = () => {
             <Select
               onChange={(v) => setRuleType(v)}
               options={[
-                { label: '🔥 ERROR 日志级别触发 (发生系统错误时告警)', value: 'error_log' },
-                { label: '🌐 HTTP 5xx 状态码触发 (接口返回服务端异常时告警)', value: 'status_5xx' },
-                { label: '⏱️ 慢 SQL 超标触发 (数据库查询超出阈值时告警)', value: 'slow_sql' },
-                { label: '🔍 关键词匹配触发 (日志包含特定关键字如 Deadlock/OutOfMemory 时告警)', value: 'keyword' },
+                { label: 'ERROR 日志级别触发 (发生系统错误时告警)', value: 'error_log' },
+                { label: 'HTTP 5xx 状态码触发 (接口返回服务端异常时告警)', value: 'status_5xx' },
+                { label: '慢 SQL 超标触发 (数据库查询超出阈值时告警)', value: 'slow_sql' },
+                { label: '关键词匹配触发 (日志包含特定关键字时告警)', value: 'keyword' },
               ]}
             />
           </Form.Item>
@@ -442,11 +457,11 @@ export const AlertTab: React.FC = () => {
             <Select
               onChange={(v) => setChannelType(v)}
               options={[
-                { label: '💬 企业微信机器人 Webhook', value: 'wecom' },
-                { label: '🔔 钉钉机器人 Webhook (支持加签)', value: 'dingtalk' },
-                { label: '🚀 飞书机器人 Webhook (Card/卡片)', value: 'feishu' },
-                { label: '🌐 自定义通用 Webhook (POST JSON)', value: 'custom_webhook' },
-                { label: '📨 联动系统通知管理插件 (Notification Manager)', value: 'notification_manager' },
+                { label: '企业微信机器人 Webhook', value: 'wecom' },
+                { label: '钉钉机器人 Webhook (支持加签)', value: 'dingtalk' },
+                { label: '飞书机器人 Webhook (Card/卡片)', value: 'feishu' },
+                { label: '自定义通用 Webhook (POST JSON)', value: 'custom_webhook' },
+                { label: '联动系统通知管理插件 (Notification Manager)', value: 'notification_manager' },
               ]}
             />
           </Form.Item>
@@ -489,19 +504,35 @@ export const AlertTab: React.FC = () => {
             <InputNumber min={1} max={1440} style={{ width: '100%' }} suffix="分钟" />
           </Form.Item>
 
-          <Form.Item name="enabled" valuePropName="checked">
-            <Switch checkedChildren="启用规则" unCheckedChildren="暂不启用" defaultChecked />
-          </Form.Item>
-        </Form>
-      </Modal>
+          <Space size="large">
+            <Form.Item name="enabled" label="启用规则" valuePropName="checked">
+              <Switch checkedChildren="启用" unCheckedChildren="停用" />
+            </Form.Item>
 
-      {/* 告警历史抽屉 */}
+            <Form.Item
+              name="aiSummaryEnabled"
+              label="联动 AI 生成根因摘要"
+              valuePropName="checked"
+              tooltip="开启后，告警发送前以 8 秒短超时调用 AI 生成精简根因摘要；超时或未配置 LLM 时自动降级。"
+            >
+              <Switch checkedChildren="开启" unCheckedChildren="关闭" />
+            </Form.Item>
+          </Space>
+        </Form>
+      </Drawer>
+
+      {/* 告警历史右侧 Drawer */}
       <Drawer
-        title="📜 告警发送历史记录"
+        title="告警发送历史记录"
         placement="right"
         width={680}
         onClose={() => setHistoryDrawerVisible(false)}
         open={historyDrawerVisible}
+        extra={
+          <Button size="middle" icon={<ReloadOutlined />} loading={historyLoading} onClick={fetchHistoryLogs}>
+            刷新
+          </Button>
+        }
       >
         <Table
           rowKey="id"
@@ -514,7 +545,11 @@ export const AlertTab: React.FC = () => {
               title: '发送时间',
               dataIndex: 'createdAt',
               width: 160,
-              render: (t) => new Date(t).toLocaleString(),
+              render: (t) => (
+                <span style={{ fontSize: 12, color: token.colorTextSecondary }}>
+                  {t ? new Date(t).toLocaleString() : '-'}
+                </span>
+              ),
             },
             {
               title: '规则名称',
@@ -530,8 +565,8 @@ export const AlertTab: React.FC = () => {
             {
               title: '状态',
               dataIndex: 'status',
-              width: 90,
-              render: (st, r) => (
+              width: 80,
+              render: (st) => (
                 <Tag color={st === 'success' ? 'success' : 'error'}>
                   {st === 'success' ? '成功' : '失败'}
                 </Tag>
@@ -542,8 +577,8 @@ export const AlertTab: React.FC = () => {
               dataIndex: 'title',
               render: (title, r) => (
                 <div>
-                  <div style={{ fontWeight: 500 }}>{title}</div>
-                  {r.errorMsg && <div style={{ color: '#ff4d4f', fontSize: 12 }}>{r.errorMsg}</div>}
+                  <div style={{ fontWeight: 500, color: token.colorText }}>{title}</div>
+                  {r.errorMsg && <div style={{ color: token.colorError, fontSize: 12 }}>{r.errorMsg}</div>}
                 </div>
               ),
             },

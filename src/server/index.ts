@@ -11,6 +11,7 @@ import { AIAnalyzerService } from './services/ai-analyzer.service';
 import { createAuditLogMiddleware } from './middlewares/audit-log';
 import { setupSlowQueryMonitor } from './middlewares/slow-query';
 import { createLoggerProResource } from './actions/logger-pro';
+import { createCompatLoggerResource } from './actions/compat-logger';
 
 function ensurePluginEnvironment() {
   if (!process.env.NODE_MODULES_PATH) {
@@ -46,7 +47,7 @@ export class PluginLoggerProServer extends Plugin {
   }
 
   async beforeLoad() {
-    this.db.import({
+    await this.db.import({
       directory: path.resolve(__dirname, 'collections'),
     });
   }
@@ -60,7 +61,8 @@ export class PluginLoggerProServer extends Plugin {
     this.dashboardService = new DashboardService(this.app, this.readerService);
     this.auditExportService = new AuditExportService(this.app);
     this.traceService = new TraceService(this.app, this.readerService);
-    this.aiAnalyzerService = new AIAnalyzerService(this.app);
+    this.aiAnalyzerService = new AIAnalyzerService(this.app, this.configService);
+    this.alertService.setAIAnalyzerService(this.aiAnalyzerService);
 
     // 2. 注册资源接口
     this.app.resource(
@@ -76,10 +78,17 @@ export class PluginLoggerProServer extends Plugin {
       ),
     );
 
+    this.app.resource(
+      createCompatLoggerResource(
+        this.readerService,
+        this.retentionService,
+      ),
+    );
+
     // 3. 注册 ACL 权限片段
     this.app.acl.registerSnippet({
       name: `pm.${this.name}.loggerPro`,
-      actions: ['loggerPro:*', 'logger_audit_logs:*', 'logger_configs:*', 'logger_alert_rules:*', 'logger_alert_logs:*', 'logger_ai_records:*'],
+      actions: ['loggerPro:*', 'logger:*', 'logger_audit_logs:*', 'logger_configs:*', 'logger_alert_rules:*', 'logger_alert_logs:*', 'logger_ai_records:*'],
     });
 
     // 4. 挂载操作审计中间件

@@ -8,6 +8,10 @@ on:
       - 'v*'
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-release:
     name: Build & Release NocoBase Plugin
@@ -125,6 +129,17 @@ jobs:
           touch .env
           touch .env.example
           touch .env.e2e.example
+          touch .env.test.example
+
+      - name: Cache Yarn Packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/yarn
+          key: ${{ runner.os }}-yarn-logger-pro-${{ hashFiles('**/yarn.lock', 'package.json') }}
+          restore-keys: |
+            ${{ runner.os }}-yarn-logger-pro-
+            ${{ runner.os }}-yarn-
+
       - name: Install Dependencies with Retry
         run: |
           yarn config set network-timeout 600000
@@ -153,29 +168,49 @@ jobs:
           echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
           mkdir -p /tmp/release-artifacts
 
-      - name: Build & Package Plugin
+      - name: Build Plugin
         run: |
           yarn nocobase build @nocobase/plugin-logger-pro
-          
+
+      - name: Verify Build Artifacts & Package
+        run: |
           cd packages/plugins/@nocobase/plugin-logger-pro
-          
-          # 校验核心产物是否存在
+
           echo "=== Verifying Build Artifacts ==="
           test -f "server.js" || { echo "ERROR: server.js is missing!"; exit 1; }
           test -f "client.js" || { echo "ERROR: client.js is missing!"; exit 1; }
+          test -f "client-v2.js" || { echo "ERROR: client-v2.js is missing!"; exit 1; }
           test -d "dist" || { echo "ERROR: dist directory not found!"; exit 1; }
           test -f "dist/server/index.js" || { echo "ERROR: dist/server/index.js is missing!"; exit 1; }
           test -f "dist/client/index.js" || { echo "ERROR: dist/client/index.js is missing!"; exit 1; }
-          
-          echo "=== Package Files List ==="
+          test -f "dist/client-v2/index.js" || { echo "ERROR: dist/client-v2/index.js is missing!"; exit 1; }
+
+          echo "=== Packaging Files List ==="
           ls -la
-          
-          # 打包发布产物 tgz 与 zip（显式指定包含根入口文件及完整 dist 目录，确保内置依赖与入口完整包含）
+
+          # 白名单打包：严格包含运行时文件、入口及授权许可，彻底排除源码与开发配置
           tar -czvf "/tmp/release-artifacts/plugin-logger-pro-v${RELEASE_VERSION}.tgz" \
-            package.json README.md server.js server.d.ts client.js client.d.ts client-v2.js client-v2.d.ts dist
-            
+            package.json README.md README_EN.md LICENSE server.js server.d.ts client.js client.d.ts client-v2.js client-v2.d.ts dist
+
           zip -r "/tmp/release-artifacts/plugin-logger-pro-v${RELEASE_VERSION}.zip" \
-            package.json README.md server.js server.d.ts client.js client.d.ts client-v2.js client-v2.d.ts dist
+            package.json README.md README_EN.md LICENSE server.js server.d.ts client.js client.d.ts client-v2.js client-v2.d.ts dist
+
+      - name: Generate Checksums
+        run: |
+          cd /tmp/release-artifacts
+          sha256sum plugin-logger-pro-v*.tgz plugin-logger-pro-v*.zip > sha256sums.txt
+          echo "=== Generated SHA256 Checksums ==="
+          cat sha256sums.txt
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: plugin-logger-pro-v${{ steps.plugin_version.outputs.version }}
+          path: |
+            /tmp/release-artifacts/plugin-logger-pro-v*.tgz
+            /tmp/release-artifacts/plugin-logger-pro-v*.zip
+            /tmp/release-artifacts/sha256sums.txt
+          retention-days: 30
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -184,10 +219,11 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', steps.plugin_version.outputs.version) }}
           name: ${{ github.ref_type == 'tag' && github.ref_name || format('Release v{0}', steps.plugin_version.outputs.version) }}
           draft: false
-          prerelease: false
+          prerelease: ${{ contains(steps.plugin_version.outputs.version, 'beta') || contains(steps.plugin_version.outputs.version, 'alpha') || contains(steps.plugin_version.outputs.version, 'rc') }}
           generate_release_notes: true
           files: |
             /tmp/release-artifacts/plugin-logger-pro-v*.tgz
             /tmp/release-artifacts/plugin-logger-pro-v*.zip
+            /tmp/release-artifacts/sha256sums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

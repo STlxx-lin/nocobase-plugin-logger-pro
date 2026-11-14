@@ -36,6 +36,64 @@ const CLEANABLE_COLLECTIONS = new Set([
   'logger_configs',
 ]);
 
+/**
+ * 严格判断是否为 Winston / FileStreamRotator 内部状态文件或系统临时文件
+ * 绝对禁止被当作过期日志删除、截断或归档打包
+ */
+export function isAuditOrSystemFile(fileName: string): boolean {
+  if (!fileName || typeof fileName !== 'string') return true;
+  const base = path.basename(fileName).toLowerCase();
+
+  // 1. winston-daily-rotate-file 隐藏哈希审计文件: .<hash>-audit.json
+  // 2. 默认审计文件: .audit.json, audit.json
+  // 3. 具名审计文件: <name>-audit.json, <name>.audit.json
+  if (
+    base === '.audit.json' ||
+    base === 'audit.json' ||
+    base.endsWith('-audit.json') ||
+    base.endsWith('.audit.json') ||
+    /^\.[a-f0-9]+-audit\.json$/i.test(base) ||
+    /\.?([a-f0-9]+-)?audit\.json$/i.test(base)
+  ) {
+    return true;
+  }
+
+  // 排除常见操作系统与临时锁文件
+  if (base === '.ds_store' || base === 'thumbs.db' || base.endsWith('.tmp') || base.endsWith('.lock')) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * 判断是否为允许清理和配额管理的日志文件
+ */
+export function isCleanableLogFile(fileName: string): boolean {
+  if (isAuditOrSystemFile(fileName)) return false;
+  const base = path.basename(fileName).toLowerCase();
+  return base.endsWith('.log') || base.endsWith('.txt') || base.endsWith('.gz');
+}
+
+/**
+ * 统一跨方言解析 Sequelize query(DELETE/UPDATE) 返回的受影响行数
+ * 解决 PostgreSQL 下返回 [[], { rowCount }] 导致 Number({ rowCount }) 产生 NaN 的缺陷
+ */
+export function parseAffectedRows(queryResult: any): number {
+  if (!queryResult) return 0;
+  const [results, metadata] = Array.isArray(queryResult) ? queryResult : [queryResult, null];
+
+  if (typeof metadata === 'number') return metadata;
+  if (metadata && typeof metadata.rowCount === 'number') return metadata.rowCount;
+  if (metadata && typeof metadata.affectedRows === 'number') return metadata.affectedRows;
+
+  if (typeof results === 'number') return results;
+  if (results && typeof results.affectedRows === 'number') return results.affectedRows;
+  if (results && typeof results.rowCount === 'number') return results.rowCount;
+
+  return 0;
+}
+
 export class LogRetentionService {
   private app: Application;
   private configService: LogConfigService;
@@ -50,6 +108,17 @@ export class LogRetentionService {
     return getLoggerFilePath(this.app.name || 'main');
   }
 
+  /**
+   * 解析白名单集合的真实表名：仅接受已注册集合，且表名通过标识符校验后才允许进入原生 SQL
+   */
+  private resolveTableName(collectionName: string): string | null {
+    if (!CLEANABLE_COLLECTIONS.has(collectionName)) return null;
+    const collection = this.app.db.getCollection(collectionName);
+    if (!collection) return null;
+    const tableName = (collection as any)?.model?.tableName || collectionName;
+    return /^[A-Za-z0-9_$]+$/.test(tableName) ? tableName : null;
+  }
+
   startScheduler() {
     this.stopScheduler();
 
@@ -59,6 +128,7 @@ export class LogRetentionService {
     const cronExp = this.configService.get(CONFIG_KEYS.AUTO_CLEAN_CRON, '0 2 * * *');
 
     try {
+      // 第三个参数 true = 立即 start()（CronJob 默认不自动启动；配合上方循环避免每次保存配置都叠加调度）
       this.cronJob = new CronJob(cronExp, async () => {
         this.app.logger?.info?.('[LoggerPro] Auto clean log task started...');
         try {
@@ -69,8 +139,7 @@ export class LogRetentionService {
         } catch (err: any) {
           this.app.logger?.error?.(`[LoggerPro] Auto clean log failed: ${err.message}`);
         }
-      });
-      this.cronJob.start();
+      }, null, true);
     } catch (err: any) {
       this.app.logger?.warn?.(`[LoggerPro] Failed to start log retention cron job: ${err.message}`);
     }
@@ -117,6 +186,9 @@ export class LogRetentionService {
           if (entry.isDirectory()) {
             await scan(fullPath, relName);
           } else if (entry.isFile()) {
+            if (isAuditOrSystemFile(entry.name) || !isCleanableLogFile(entry.name)) {
+              continue;
+            }
             const stat = await fsp.stat(fullPath);
             fileList.push({ fullPath, relName, size: stat.size, mtimeMs: stat.mtimeMs });
           }
@@ -210,49 +282,48 @@ export class LogRetentionService {
   ): Promise<{ totalDeleted: number; details: string[] }> {
     let totalDeleted = 0;
     const details: string[] = [];
-    const expireDate = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
-    const expireIso = expireDate.toISOString();
+    const days = Math.max(Number(retentionDays) || 0, 0);
+    const expireIso = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     const dialect = this.app.db.sequelize?.getDialect?.() || 'sqlite';
+    const rowLimit = Math.max(Number(maxAuditRows) || 0, 0);
 
-    // 1. 清理 logger_audit_logs 过期记录
+    // 1. 清理 logger_audit_logs 过期记录（时间条件走参数绑定，不做字符串拼接）
     try {
       const auditRepo = this.app.db.getRepository('logger_audit_logs');
-      if (auditRepo) {
-        const tableName = (auditRepo.collection as any)?.model?.tableName || 'logger_audit_logs';
-        const beforeCount = await auditRepo.count();
+      const tableName = this.resolveTableName('logger_audit_logs');
+      if (auditRepo && tableName) {
+        const q = (name: string) => (dialect === 'mysql' || dialect === 'mariadb' ? `\`${name}\`` : `"${name}"`);
 
-        // 原生 SQL 时间范围清理
-        if (dialect === 'mysql' || dialect === 'mariadb') {
-          await this.app.db.sequelize.query(`DELETE FROM \`${tableName}\` WHERE \`createdAt\` < '${expireIso}';`);
-        } else {
-          await this.app.db.sequelize.query(`DELETE FROM "${tableName}" WHERE "createdAt" < '${expireIso}';`);
+        const queryResult: any = await this.app.db.sequelize.query(
+          `DELETE FROM ${q(tableName)} WHERE ${q('createdAt')} < :expireIso`,
+          { replacements: { expireIso } },
+        );
+        const deletedFromExpire = parseAffectedRows(queryResult);
+        if (deletedFromExpire > 0) {
+          totalDeleted += deletedFromExpire;
+          details.push(`清理过期操作审计记录: ${deletedFromExpire} 条 (< ${days} 天)`);
         }
 
-        const afterCount = await auditRepo.count();
-        const deleted = Math.max(beforeCount - afterCount, 0);
-        if (deleted > 0) {
-          totalDeleted += deleted;
-          details.push(`清理过期操作审计记录: ${deleted} 条 (< ${retentionDays} 天)`);
-        }
-
-        // 容量熔断保护
-        if (afterCount > maxAuditRows) {
-          const excess = afterCount - maxAuditRows;
-          if (dialect === 'sqlite') {
-            await this.app.db.sequelize.query(
-              `DELETE FROM "${tableName}" WHERE "id" IN (SELECT "id" FROM "${tableName}" ORDER BY "createdAt" ASC LIMIT ${excess});`
-            );
-          } else if (dialect === 'mysql' || dialect === 'mariadb') {
-            await this.app.db.sequelize.query(
-              `DELETE FROM \`${tableName}\` ORDER BY \`createdAt\` ASC LIMIT ${excess};`
-            );
-          } else {
-            await this.app.db.sequelize.query(
-              `DELETE FROM "${tableName}" WHERE "id" IN (SELECT "id" FROM "${tableName}" ORDER BY "createdAt" ASC LIMIT ${excess});`
-            );
+        // 容量熔断保护：仅在配置了上限时生效
+        if (rowLimit > 0) {
+          const [countRows]: any = await this.app.db.sequelize.query(
+            `SELECT COUNT(*) AS total FROM ${q(tableName)}`,
+          );
+          const afterCount = Number(countRows?.[0]?.total ?? countRows?.[0]?.count ?? 0);
+          const excess = afterCount - rowLimit;
+          if (excess > 0) {
+            if (dialect === 'mysql' || dialect === 'mariadb') {
+              await this.app.db.sequelize.query(
+                `DELETE FROM ${q(tableName)} ORDER BY ${q('createdAt')} ASC LIMIT ${Math.floor(excess)}`,
+              );
+            } else {
+              await this.app.db.sequelize.query(
+                `DELETE FROM ${q(tableName)} WHERE ${q('id')} IN (SELECT ${q('id')} FROM ${q(tableName)} ORDER BY ${q('createdAt')} ASC LIMIT ${Math.floor(excess)})`,
+              );
+            }
+            totalDeleted += excess;
+            details.push(`容量熔断淘汰超额审计记录: ${excess} 条 (保持单表不超过 ${rowLimit} 条)`);
           }
-          totalDeleted += excess;
-          details.push(`容量熔断淘汰超额审计记录: ${excess} 条 (保持单表不超过 ${maxAuditRows} 条)`);
         }
       }
     } catch (e: any) {
@@ -260,29 +331,19 @@ export class LogRetentionService {
     }
 
     // 2. 清理 logger_alert_logs 与 logger_ai_records 过期记录
-    try {
-      const alertRepo = this.app.db.getRepository('logger_alert_logs');
-      if (alertRepo) {
-        const tableName = (alertRepo.collection as any)?.model?.tableName || 'logger_alert_logs';
-        if (dialect === 'mysql' || dialect === 'mariadb') {
-          await this.app.db.sequelize.query(`DELETE FROM \`${tableName}\` WHERE \`createdAt\` < '${expireIso}';`);
-        } else {
-          await this.app.db.sequelize.query(`DELETE FROM "${tableName}" WHERE "createdAt" < '${expireIso}';`);
-        }
+    for (const collection of ['logger_alert_logs', 'logger_ai_records']) {
+      try {
+        const repo = this.app.db.getRepository(collection);
+        const tableName = this.resolveTableName(collection);
+        if (!repo || !tableName) continue;
+        const q = (name: string) => (dialect === 'mysql' || dialect === 'mariadb' ? `\`${name}\`` : `"${name}"`);
+        await this.app.db.sequelize.query(`DELETE FROM ${q(tableName)} WHERE ${q('createdAt')} < :expireIso`, {
+          replacements: { expireIso },
+        });
+      } catch (e: any) {
+        this.app.logger?.warn?.(`[LoggerPro] Clean ${collection} error: ${e.message}`);
       }
-    } catch {}
-
-    try {
-      const aiRepo = this.app.db.getRepository('logger_ai_records');
-      if (aiRepo) {
-        const tableName = (aiRepo.collection as any)?.model?.tableName || 'logger_ai_records';
-        if (dialect === 'mysql' || dialect === 'mariadb') {
-          await this.app.db.sequelize.query(`DELETE FROM \`${tableName}\` WHERE \`createdAt\` < '${expireIso}';`);
-        } else {
-          await this.app.db.sequelize.query(`DELETE FROM "${tableName}" WHERE "createdAt" < '${expireIso}';`);
-        }
-      }
-    } catch {}
+    }
 
     return { totalDeleted, details };
   }
@@ -331,7 +392,7 @@ export class LogRetentionService {
     if (resolved === basePath || !resolved.startsWith(basePath + path.sep)) {
       return null;
     }
-    if (!/\.(log|txt)$/i.test(resolved)) {
+    if (isAuditOrSystemFile(resolved) || !/\.(log|txt)$/i.test(resolved)) {
       return null;
     }
     try {
@@ -376,7 +437,7 @@ export class LogRetentionService {
           const relName = rel ? path.join(rel, item.name) : item.name;
           if (item.isDirectory()) {
             await scan(path.join(dir, item.name), relName);
-          } else if (item.isFile() && (item.name.endsWith('.log') || item.name.endsWith('.txt'))) {
+          } else if (item.isFile() && !isAuditOrSystemFile(item.name) && (item.name.endsWith('.log') || item.name.endsWith('.txt'))) {
             allFiles.push(relName.replace(/\\/g, '/'));
           }
         }
@@ -408,6 +469,14 @@ export class LogRetentionService {
       passthrough.emit('error', err);
     });
 
+    // 下游连接断开或关闭时，向上游广播销毁，释放文件描述符
+    passthrough.on('close', () => {
+      try {
+        if (!gz.destroyed) gz.destroy();
+        if (tarPack && !tarPack.destroyed) (tarPack as any).destroy?.();
+      } catch {}
+    });
+
     tarPack.pipe(gz).pipe(passthrough);
 
     return passthrough;
@@ -436,6 +505,9 @@ export class LogRetentionService {
           if (entry.isDirectory()) {
             await scanFiles(fullPath);
           } else if (entry.isFile()) {
+            if (isAuditOrSystemFile(entry.name) || !isCleanableLogFile(entry.name)) {
+              continue;
+            }
             const stat = await fsp.stat(fullPath);
             totalFiles++;
             totalFileBytes += stat.size;
@@ -533,16 +605,11 @@ export class LogRetentionService {
     if (!collectionName || typeof collectionName !== 'string') {
       throw new Error('collectionName is required');
     }
-    if (!CLEANABLE_COLLECTIONS.has(collectionName)) {
+    const tableName = this.resolveTableName(collectionName);
+    if (!tableName) {
       throw new Error(`Collection ${collectionName} is not allowed to be cleaned`);
     }
-    const collection = this.app.db.getCollection(collectionName);
     const repo = this.app.db.getRepository(collectionName);
-    if (!collection && !repo) {
-      throw new Error(`Collection ${collectionName} not found`);
-    }
-
-    const tableName = (collection as any)?.model?.tableName || collectionName;
     const dialect = this.app.db.sequelize?.getDialect?.() || 'sqlite';
 
     try {
@@ -565,51 +632,43 @@ export class LogRetentionService {
   }
 
   /**
-   * 获取待清理的数据总量（原生 SQL 绝对精准计数，绝不受过滤条件序列化或软删除干扰）
+   * 获取待清理的数据总量（原生 SQL 精准计数，时间条件参数绑定）
    */
   async getCleanTotalCount(collectionName = 'logger_audit_logs', days?: number): Promise<{ totalCount: number }> {
-    if (!CLEANABLE_COLLECTIONS.has(collectionName)) {
+    const tableName = this.resolveTableName(collectionName);
+    if (!tableName) {
       return { totalCount: 0 };
     }
-    const collection = this.app.db.getCollection(collectionName);
     const repo = this.app.db.getRepository(collectionName);
-    if (!collection && !repo) {
-      return { totalCount: 0 };
-    }
-
-    const tableName = (collection as any)?.model?.tableName || collectionName;
     const dialect = this.app.db.sequelize?.getDialect?.() || 'sqlite';
     const isExpireMode = typeof days === 'number' && !isNaN(days) && days > 0;
+    const q = (name: string) => (dialect === 'mysql' || dialect === 'mariadb' ? `\`${name}\`` : `"${name}"`);
 
     try {
-      if (isExpireMode) {
-        const expireDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-        const expireIso = expireDate.toISOString();
-        const sql =
-          dialect === 'mysql' || dialect === 'mariadb'
-            ? `SELECT COUNT(*) AS total FROM \`${tableName}\` WHERE \`createdAt\` < '${expireIso}';`
-            : `SELECT COUNT(*) AS total FROM "${tableName}" WHERE "createdAt" < '${expireIso}';`;
-        const [results]: any = await this.app.db.sequelize.query(sql);
-        const total = Number(results?.[0]?.total || results?.[0]?.count || 0);
-        return { totalCount: total };
-      }
-
-      const sql =
-        dialect === 'mysql' || dialect === 'mariadb'
-          ? `SELECT COUNT(*) AS total FROM \`${tableName}\`;`
-          : `SELECT COUNT(*) AS total FROM "${tableName}";`;
-      const [results]: any = await this.app.db.sequelize.query(sql);
-      const total = Number(results?.[0]?.total || results?.[0]?.count || 0);
+      const sql = isExpireMode
+        ? `SELECT COUNT(*) AS total FROM ${q(tableName)} WHERE ${q('createdAt')} < :expireIso`
+        : `SELECT COUNT(*) AS total FROM ${q(tableName)}`;
+      const [results]: any = await this.app.db.sequelize.query(
+        sql,
+        isExpireMode
+          ? { replacements: { expireIso: new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() } }
+          : undefined,
+      );
+      const total = Number(results?.[0]?.total ?? results?.[0]?.count ?? 0);
       return { totalCount: total };
     } catch {
       if (repo) {
-        if (isExpireMode) {
-          const expireDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-          const total = await repo.count({ filter: { createdAt: { $lt: expireDate } } });
+        try {
+          if (isExpireMode) {
+            const expireDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+            const total = await repo.count({ filter: { createdAt: { $lt: expireDate } } });
+            return { totalCount: total };
+          }
+          const total = await repo.count();
           return { totalCount: total };
+        } catch {
+          return { totalCount: 0 };
         }
-        const total = await repo.count();
-        return { totalCount: total };
       }
       return { totalCount: 0 };
     }
@@ -623,47 +682,35 @@ export class LogRetentionService {
     days?: number,
     limit = 20000,
   ): Promise<{ remainingCount: number }> {
-    if (!CLEANABLE_COLLECTIONS.has(collectionName)) {
+    const tableName = this.resolveTableName(collectionName);
+    if (!tableName) {
       throw new Error(`Collection ${collectionName} is not allowed to be cleaned`);
     }
-    const collection = this.app.db.getCollection(collectionName);
     const repo = this.app.db.getRepository(collectionName);
-    if (!collection && !repo) {
-      throw new Error(`Collection ${collectionName} not found`);
-    }
-
-    const tableName = (collection as any)?.model?.tableName || collectionName;
     const dialect = this.app.db.sequelize?.getDialect?.() || 'sqlite';
-    const batchLimit = Math.max(Number(limit) || 20000, 1000);
+    // 批量上限夹紧，避免超大 LIMIT 一次锁表过久
+    const batchLimit = Math.min(Math.max(Number(limit) || 20000, 1000), 50000);
+    const q = (name: string) => (dialect === 'mysql' || dialect === 'mariadb' ? `\`${name}\`` : `"${name}"`);
 
     const isExpireMode = typeof days === 'number' && !isNaN(days) && days > 0;
-    const expireDate = isExpireMode ? new Date(Date.now() - days * 24 * 60 * 60 * 1000) : null;
-    const expireIso = expireDate ? expireDate.toISOString() : null;
+    const expireIso = isExpireMode ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString() : null;
 
     try {
       if (isExpireMode && expireIso) {
-        if (dialect === 'sqlite') {
+        if (dialect === 'mysql' || dialect === 'mariadb') {
           await this.app.db.sequelize.query(
-            `DELETE FROM "${tableName}" WHERE "id" IN (SELECT "id" FROM "${tableName}" WHERE "createdAt" < '${expireIso}' LIMIT ${batchLimit});`
-          );
-        } else if (dialect === 'mysql' || dialect === 'mariadb') {
-          await this.app.db.sequelize.query(
-            `DELETE FROM \`${tableName}\` WHERE \`createdAt\` < '${expireIso}' LIMIT ${batchLimit};`
+            `DELETE FROM ${q(tableName)} WHERE ${q('createdAt')} < :expireIso LIMIT ${batchLimit}`,
+            { replacements: { expireIso } },
           );
         } else {
           await this.app.db.sequelize.query(
-            `DELETE FROM "${tableName}" WHERE "id" IN (SELECT "id" FROM "${tableName}" WHERE "createdAt" < '${expireIso}' LIMIT ${batchLimit});`
+            `DELETE FROM ${q(tableName)} WHERE ${q('id')} IN (SELECT ${q('id')} FROM ${q(tableName)} WHERE ${q('createdAt')} < :expireIso LIMIT ${batchLimit})`,
+            { replacements: { expireIso } },
           );
         }
       } else {
         // 清空全部模式：纯数据秒级清空，绝不重建表结构
-        if (dialect === 'sqlite') {
-          await this.app.db.sequelize.query(`DELETE FROM "${tableName}";`);
-        } else if (dialect === 'mysql' || dialect === 'mariadb') {
-          await this.app.db.sequelize.query(`DELETE FROM \`${tableName}\`;`);
-        } else {
-          await this.app.db.sequelize.query(`DELETE FROM "${tableName}";`);
-        }
+        await this.app.db.sequelize.query(`DELETE FROM ${q(tableName)};`);
       }
     } catch (err: any) {
       this.app.logger?.warn?.(`[LoggerPro] cleanBatch error: ${err.message}`);
